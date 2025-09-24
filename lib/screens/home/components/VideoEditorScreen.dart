@@ -1,4 +1,7 @@
 import 'dart:io';
+import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:nb_utils/nb_utils.dart';
 import 'package:bbdsocial/models/VideoEditorModel.dart' show TextOverlay, TrimData, CropData;
@@ -85,6 +88,9 @@ class _SVVideoEditorScreenState extends State<SVVideoEditorScreen> {
   String _selectedFont = 'Roboto';
   FontWeight _selectedFontWeight = FontWeight.bold;
 
+  bool _isUploading = false;
+  String? _uploadError;
+
   @override
   void initState() {
     super.initState();
@@ -109,6 +115,125 @@ class _SVVideoEditorScreenState extends State<SVVideoEditorScreen> {
     super.dispose();
   }
 
+  // Method to get authentication token
+  Future<String?> _getAuthToken() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString('auth_token'); // Adjust this based on your auth storage
+  }
+
+  // Method to upload the final edited video
+  Future<void> _uploadVideo() async {
+    if (_isUploading) return;
+
+    setState(() {
+      _isUploading = true;
+      _uploadError = null;
+    });
+
+    try {
+      // Get the current video file path
+      String videoPath = _controller.dataSource;
+      if (videoPath.startsWith('file://')) {
+        videoPath = videoPath.substring(7);
+      }
+
+      File videoFile = File(videoPath);
+      
+      if (!await videoFile.exists()) {
+        throw Exception('Video file not found');
+      }
+
+      // Get authentication token
+      String? token = await _getAuthToken();
+      if (token == null) {
+        throw Exception('Please login to upload video');
+      }
+
+      // Create multipart request
+      var request = http.MultipartRequest(
+        'POST',
+        Uri.parse('https://your-domain.com/api/videos/upload/'), // Replace with your actual API URL
+      );
+
+      // To track progress, you can use a StreamedRequest and listen to its progress
+      final streamedRequest = request.send();
+      streamedRequest.asStream().listen((response) {
+        response.stream.listen((chunk) {
+          // Handle progress updates here if needed
+        });
+      });
+
+      // Add headers
+      request.headers['Authorization'] = 'Bearer $token';
+
+      // Add video file
+      request.files.add(await http.MultipartFile.fromPath(
+        'video',
+        videoPath,
+        filename: 'edited_video_${DateTime.now().millisecondsSinceEpoch}.mp4',
+      ));
+
+      // Add other form data
+      request.fields['title'] = 'Edited Video ${DateTime.now().toString()}';
+      request.fields['description'] = 'Video edited in BBDSocial app';
+
+      // Send request
+      final response = await request.send();
+
+      if (response.statusCode == 201) {
+        final responseData = await response.stream.bytesToString();
+        final jsonResponse = json.decode(responseData);
+        
+        toast('Video uploaded successfully!');
+        
+        // Navigate back or to success screen
+        if (mounted) {
+          Navigator.of(context).pop(true); // Pass success result
+        }
+      } else {
+        final errorData = await response.stream.bytesToString();
+        throw Exception('Upload failed: ${response.statusCode} - $errorData');
+      }
+    } catch (e) {
+      print('Upload error: $e');
+      setState(() {
+        _uploadError = e.toString();
+      });
+      toast('Upload failed: ${e.toString()}');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isUploading = false;
+        });
+      }
+    }
+  }
+
+  // Updated _handlePost method
+  void _handlePost() async {
+    // Show confirmation dialog before uploading
+    bool confirmUpload = await showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Upload Video'),
+        content: Text('Are you sure you want to upload this video?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: Text('Upload'),
+          ),
+        ],
+      ),
+    ) ?? false;
+
+    if (confirmUpload) {
+      await _uploadVideo();
+    }
+  }
   void _checkAndStartTimer() {
     if (_appliedCrop != null && !_isProcessingCrop) {
       // Set state to true to immediately show the indicator
@@ -480,11 +605,6 @@ Widget _buildFontWeightSelector(void Function(void Function()) setState, FontWei
     }
   }
 
-  void _handlePost() {
-    toast("Posting video... (Simulated)");
-    Navigator.of(context).pop();
-  }
-
   Widget _buildCropHandles(double width, double height) {
     if (_cropRect == null) return SizedBox.shrink();
 
@@ -645,7 +765,25 @@ Widget _buildFontWeightSelector(void Function(void Function()) setState, FontWei
         title: Text('Editor', style: boldTextStyle(color: Colors.white)),
         centerTitle: true,
         actions: [
-          if (_isCropping) ...[
+          if (_isUploading) ...[
+            Padding(
+              padding: EdgeInsets.all(16),
+              child: Row(
+                children: [
+                  SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                    ),
+                  ),
+                  SizedBox(width: 8),
+                  Text('Uploading...', style: TextStyle(color: Colors.white)),
+                ],
+              ),
+            ),
+          ] else if (_isCropping) ...[
             TextButton(
               onPressed: () => setState(() {
                 _isCropping = false;
@@ -701,6 +839,39 @@ Widget _buildFontWeightSelector(void Function(void Function()) setState, FontWei
 
                                   return Stack(
                                     children: [
+                                        // Add this to your Stack children in the build method, right before the processing crop overlay:
+                                        if (_uploadError != null && !_isUploading)
+                                        Positioned(
+                                          top: 100,
+                                          left: 20,
+                                          right: 20,
+                                          child: Container(
+                                          padding: EdgeInsets.all(12),
+                                          decoration: BoxDecoration(
+                                            color: Colors.red.withOpacity(0.8),
+                                            borderRadius: BorderRadius.circular(8),
+                                          ),
+                                          child: Row(
+                                            children: [
+                                            Icon(Icons.error, color: Colors.white),
+                                            SizedBox(width: 8),
+                                            Expanded(
+                                              child: Text(
+                                              _uploadError!,
+                                              style: TextStyle(color: Colors.white),
+                                              maxLines: 2,
+                                              ),
+                                            ),
+                                            IconButton(
+                                              icon: Icon(Icons.close, color: Colors.white),
+                                              onPressed: () => setState(() => _uploadError = null),
+                                              padding: EdgeInsets.zero,
+                                              iconSize: 20,
+                                            ),
+                                            ],
+                                          ),
+                                          ),
+                                        ),
                                       Positioned(
                                         left: left,
                                         top: top,
