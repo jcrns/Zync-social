@@ -1,0 +1,47 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        
+        {
+            "name": "Flutter (iPhone 11 Pro)",
+            "request": "launch",
+            "type": "dart",
+            "program": "lib/main.dart",
+            "toolArgs": [
+                "-d",
+                "F67E5BEB-3612-4554-BC41-4C4CB44641CA",
+                "--debug"
+            ]
+        },
+        {
+            "name": "socialv_prokit",
+            "request": "launch",
+            "type": "dart",
+            "program": "lib/main.dart"
+        },
+        {
+            "name": "socialv_prokit (profile mode)",
+            "request": "launch",
+            "type": "dart",
+            "program": "lib/main.dart",
+            "toolArgs": [
+                "--profile"
+            ]
+        },
+        {
+            "name": "socialv_prokit (release mode)",
+            "request": "launch",
+            "type": "dart",
+            "program": "lib/main.dart",
+            "toolArgs": [
+                "--release"
+            ]
+        },
+        {
+            "name": "socialv_prokit (Flutter)",
+            "program": "lib/main.dart",
+            "request": "launch",
+            "type": "dart"
+        }
+    ]
+}

@@ -1,0 +1,9 @@
+Bottom Nav
+
+- Home (Tweets/Pic)
+- Search
+- Post
+- Tiktok like content
+- Profile
+
+
