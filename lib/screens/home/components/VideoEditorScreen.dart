@@ -333,152 +333,152 @@ Widget _buildFontWeightSelector(void Function(void Function()) setState, FontWei
     return '#${c.value.toRadixString(16).padLeft(8, '0').toUpperCase()}';
   }
 
-void _handleCrop() async {
-  if (_cropRect == null) {
-    setState(() => _isCropping = false);
-    return;
-  }
+  void _handleCrop() async {
+    if (_cropRect == null) {
+      setState(() => _isCropping = false);
+      return;
+    }
 
-  final renderBox = _aspectKey.currentContext?.findRenderObject() as RenderBox?;
-  if (renderBox == null) {
-    setState(() => _isCropping = false);
-    return;
-  }
+    final renderBox = _aspectKey.currentContext?.findRenderObject() as RenderBox?;
+    if (renderBox == null) {
+      setState(() => _isCropping = false);
+      return;
+    }
 
-  // Get the actual video dimensions
-
-  
-  // final videoWidth = _controller.value.videoWidth.toDouble();
-  // final videoHeight = _controller.value.videoHeight.toDouble();
-
-  final videoWidth = _controller.value.size.width;
-  final videoHeight = _controller.value.size.height;
-  print('Video dimensions from controller: width=$videoWidth, height=$videoHeight');
-  
-  // Get the displayed video dimensions
-  final displaySize = renderBox.size;
-  
-  // Calculate the actual video content area within the display
-  final videoAspect = videoWidth / videoHeight;
-  final displayAspect = displaySize.width / displaySize.height;
-  
-  double contentWidth, contentHeight, contentX, contentY;
-  
-  if (videoAspect > displayAspect) {
-    // Video is wider than display - letterboxing on top and bottom
-    contentWidth = displaySize.width;
-    // contentHeight = displaySize.width / videoAspect;
-    contentHeight = displaySize.height;
-    print("contentHeight: $contentHeight");
-    contentX = 0;
-    contentY = (displaySize.height - contentHeight) / 2;
-    // contentY = displaySize.height;
-  } else {
-    // Video is taller than display - pillarboxing on sides
-    contentHeight = displaySize.height;
-    contentWidth = displaySize.height * videoAspect;
-    contentX = (displaySize.width - contentWidth) / 2;
-    contentY = 0;
-  }
-  
-  // Adjust crop rect to be relative to the video content area
-  print("_cropRect!.top");
-  print(_cropRect!.top);
-  print("_cropRect!.right");
-  print(_cropRect!.right);
-  print("_cropRect!.left");
-  print(_cropRect!.left);
-  print("_cropRect!.bottom");
-  print(_cropRect!.bottom);
-  
-  final adjustedLeft = (_cropRect!.left - contentX).clamp(0, contentWidth);
-  final adjustedTop = (_cropRect!.top - contentY).clamp(0, contentHeight);
-  final adjustedRight = (_cropRect!.right - contentX).clamp(0, contentWidth);
-  final adjustedBottom = (_cropRect!.bottom - contentY).clamp(0, contentHeight);
-  // final adjustedBottom = (_cropRect!.bottom - contentY).clamp(0, contentHeight);
-  print('adjustedLeft: $adjustedLeft, adjustedTop: $adjustedTop, adjustedRight: $adjustedRight, adjustedBottom: $adjustedBottom');
-  
-  // Convert to video coordinates
-  final scaleX = videoWidth / contentWidth;
-  // final scaleY = videoHeight / contentHeight;
-  final scaleY = scaleX;
-  print('Scale factors: scaleX=$scaleX, scaleY=$scaleY');
-  
-  final cropX = (adjustedLeft * scaleX).round();
-  final cropY = (adjustedTop * scaleY).round();
-  final cropW = ((adjustedRight - adjustedLeft) * scaleX).round();
-  final cropH = ((adjustedBottom - adjustedTop) * scaleY).round();
-
-
-  print('Debug: Validating crop dimensions...');
-  print('Crop dimensions: cropW=$cropW, cropH=$cropH, cropX=$cropX, cropY=$cropY');
-  print('Video dimensions: videoWidth=$videoWidth, videoHeight=$videoHeight');
-
-  // Ensure crop dimensions are valid
-  if (cropW <= 0 || cropH <= 0 || cropX < 0 || cropY < 0 || 
-      cropX + cropW > videoWidth || cropY + cropH > videoHeight) {
-    toast('Invalid crop area');
-    setState(() => _isCropping = false);
-    return;
-  }
-
-  setState(() {
-    _isProcessingCrop = true;
-    _isCropping = false;
-  });
-
-  try {
-    final tempDir = await getTemporaryDirectory();
-    final outPath = '${tempDir.path}/cropped_${DateTime.now().millisecondsSinceEpoch}.mp4';
-
-    final cmd = '-i "${widget.videoPath}" -filter:v "crop=$cropW:$cropH:$cropX:$cropY" -c:a copy "$outPath"';
-    toast('Cropping video...');
+    // Get the actual video dimensions from the controller
+    final videoWidth = _controller.value.size.width;
+    final videoHeight = _controller.value.size.height;
+    print('Video dimensions: width=$videoWidth, height=$videoHeight');
     
-    await FFmpegKit.executeAsync(cmd, (session) async {
-      final returnCode = await session.getReturnCode();
-      if (returnCode != null && returnCode.isValueSuccess()) {
-        // Store crop data before nullifying _cropRect
-        final cropData = CropData(
-          left: adjustedLeft / contentWidth,
-          top: adjustedTop / contentHeight,
-          right: adjustedRight / contentWidth,
-          bottom: adjustedBottom / contentHeight,
-        );
-        print(
-          'Crop data to store: '
-          'left: ${cropData.left}, '
-          'top: ${cropData.top}, '
-          'right: ${cropData.right}, '
-          'bottom: ${cropData.bottom} '
-          '| Content Size: '
-          'width: $contentWidth, '
-          'height: $contentHeight',
-        );
-        
-        await _controller.pause();
-        await _controller.dispose();
-        
-        _controller = VideoPlayerController.file(File(outPath))
-          ..initialize().then((_) {
-            setState(() {
-              _isProcessingCrop = false;
-              _cropRect = null;
-              _appliedCrop = cropData;
-            });
-            _controller.setLooping(true);
-            toast('Crop finished');
-            print("Crop applied: $_appliedCrop");
-          });
-      } else {
-        setState(() => _isProcessingCrop = false);
-        toast('Crop failed');
-      }
+    // Get the displayed video container dimensions
+    final displaySize = renderBox.size;
+    print('Display dimensions: width=${displaySize.width}, height=${displaySize.height}');
+    
+    // Calculate the actual video content area within the display
+    final videoAspect = videoWidth / videoHeight;
+    final displayAspect = displaySize.width / displaySize.height;
+    
+    double contentWidth, contentHeight, contentX, contentY;
+    
+    if (videoAspect > displayAspect) {
+      // Video is wider than display - letterboxing on top and bottom
+      contentWidth = displaySize.width;
+      contentHeight = displaySize.width / videoAspect;
+      contentX = 0;
+      contentY = (displaySize.height - contentHeight) / 2;
+    } else {
+      // Video is taller than display - pillarboxing on sides
+      contentHeight = displaySize.height;
+      contentWidth = displaySize.height * videoAspect;
+      contentX = (displaySize.width - contentWidth) / 2;
+      contentY = 0;
+    }
+    
+    print('Content area: x=$contentX, y=$contentY, width=$contentWidth, height=$contentHeight');
+    print('Crop rect: left=${_cropRect!.left}, top=${_cropRect!.top}, right=${_cropRect!.right}, bottom=${_cropRect!.bottom}');
+    
+    // Ensure crop rectangle is within the video content area
+    final clampedLeft = _cropRect!.left.clamp(contentX, contentX + contentWidth);
+    final clampedTop = _cropRect!.top.clamp(contentY, contentY + contentHeight);
+    final clampedRight = _cropRect!.right.clamp(contentX, contentX + contentWidth);
+    final clampedBottom = _cropRect!.bottom.clamp(contentY, contentY + contentHeight);
+    
+    // Convert to relative coordinates within the video content area
+    final relativeLeft = (clampedLeft - contentX) / contentWidth;
+    final relativeTop = (clampedTop - contentY) / contentHeight;
+    final relativeRight = (clampedRight - contentX) / contentWidth;
+    final relativeBottom = (clampedBottom - contentY) / contentHeight;
+    
+    print('Relative coordinates: left=$relativeLeft, top=$relativeTop, right=$relativeRight, bottom=$relativeBottom');
+    
+    // Convert to actual video coordinates
+    final cropX = (relativeLeft * videoWidth).round();
+    final cropY = (relativeTop * videoHeight).round();
+    final cropW = ((relativeRight - relativeLeft) * videoWidth).round();
+    final cropH = ((relativeBottom - relativeTop) * videoHeight).round();
+
+    print('Final crop coordinates: x=$cropX, y=$cropY, width=$cropW, height=$cropH');
+    print('Video bounds: width=$videoWidth, height=$videoHeight');
+
+    // Validate crop dimensions
+    if (cropW <= 0 || cropH <= 0 || cropX < 0 || cropY < 0 || 
+        cropX + cropW > videoWidth || cropY + cropH > videoHeight) {
+      print('Invalid crop area: width=$cropW, height=$cropH, x=$cropX, y=$cropY');
+      toast('Invalid crop area. Please select a smaller area.');
+      setState(() => _isCropping = false);
+      return;
+    }
+
+    // Ensure minimum crop size
+    if (cropW < 50 || cropH < 50) {
+      toast('Crop area is too small. Please select a larger area.');
+      setState(() => _isCropping = false);
+      return;
+    }
+
+    setState(() {
+      _isProcessingCrop = true;
+      _isCropping = false;
     });
-  } catch (e) {
-    setState(() => _isProcessingCrop = false);
-    toast('Crop error: $e');
+
+    try {
+      final tempDir = await getTemporaryDirectory();
+      final outPath = '${tempDir.path}/cropped_${DateTime.now().millisecondsSinceEpoch}.mp4';
+
+      final cmd = '-i "${widget.videoPath}" -filter:v "crop=$cropW:$cropH:$cropX:$cropY" -c:a copy "$outPath"';
+      print('FFmpeg command: $cmd');
+      toast('Cropping video...');
+      
+      await FFmpegKit.executeAsync(cmd, (session) async {
+        final returnCode = await session.getReturnCode();
+        if (returnCode != null && returnCode.isValueSuccess()) {
+          // Store crop data for reference
+          final cropData = CropData(
+            left: relativeLeft,
+            top: relativeTop,
+            right: relativeRight,
+            bottom: relativeBottom,
+          );
+          
+          print('Crop successful. Data: $cropData');
+          
+          await _controller.pause();
+          await _controller.dispose();
+          
+          _controller = VideoPlayerController.file(File(outPath))
+            ..initialize().then((_) {
+              setState(() {
+                _isProcessingCrop = false;
+                _cropRect = null;
+                _appliedCrop = cropData;
+                _showCroppedIndicator = true;
+              });
+              _controller.setLooping(true);
+              _controller.play();
+              toast('Crop finished successfully');
+              
+              // Hide indicator after 5 seconds
+              Future.delayed(Duration(seconds: 5), () {
+                if (mounted) {
+                  setState(() {
+                    _showCroppedIndicator = false;
+                  });
+                }
+              });
+            });
+        } else {
+          final log = await session.getLogs();
+          print('FFmpeg error: $log');
+          setState(() => _isProcessingCrop = false);
+          toast('Crop failed. Please try again.');
+        }
+      });
+    } catch (e) {
+      print('Crop error: $e');
+      setState(() => _isProcessingCrop = false);
+      toast('Crop error: $e');
+    }
   }
-}
 
   void _handlePost() {
     toast("Posting video... (Simulated)");
@@ -713,8 +713,9 @@ void _handleCrop() async {
                                               if (_cropRect == null) {
                                                 setState(() {
                                                   _isCropping = true;
-                                                  final defaultW = width * 0.6;
-                                                  final defaultH = height * 0.6;
+                                                  // Use proportional sizing based on video dimensions
+                                                  final defaultW = width * 0.7;
+                                                  final defaultH = height * 0.7;
                                                   final leftPos = (local.dx - defaultW / 2).clamp(0.0, width - defaultW);
                                                   final topPos = (local.dy - defaultH / 2).clamp(0.0, height - defaultH);
                                                   _cropRect = Rect.fromLTWH(leftPos, topPos, defaultW, defaultH);
