@@ -31,11 +31,24 @@ class _SVPostDetailScreenState extends State<SVPostDetailScreen> {
   Map<int, bool> _expandedPosts = {};
   Map<int, bool> _expandedComments = {};
 
+  // Input state for creating replies / comments
+  final TextEditingController _postController = TextEditingController();
+  final FocusNode _postFocusNode = FocusNode();
+  int? _replyingToPostId;
+  String _replyingToUsername = '';
+
   @override
   void initState() {
     super.initState();
     _post = widget.post;
     _fetchPostDetails();
+  }
+
+  @override
+  void dispose() {
+    _postController.dispose();
+    _postFocusNode.dispose();
+    super.dispose();
   }
 
   Future<void> _fetchPostDetails() async {
@@ -393,6 +406,41 @@ class _SVPostDetailScreenState extends State<SVPostDetailScreen> {
     );
   }
 
+  Future<void> createPost(String content, {int? parentId}) async {
+    if (content.trim().isEmpty) return;
+    try {
+      final url = '${widget.url}/api/social-posts/';
+      final Map<String, dynamic> postData = {'content': content};
+      if (parentId != null) postData['parent'] = parentId;
+
+      final response = await http.post(
+        Uri.parse(url),
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          'Authorization': 'Token ${widget.token}',
+        },
+        body: json.encode(postData),
+      );
+
+      if (response.statusCode == 201) {
+        _postController.clear();
+        setState(() {
+          _replyingToPostId = null;
+          _replyingToUsername = '';
+        });
+        await _fetchPostDetails();
+        toast('Posted');
+      } else {
+        print('Create post failed: ${response.statusCode} ${response.body}');
+        toast('Failed to create post');
+      }
+    } catch (e) {
+      print('Error creating post: $e');
+      toast('Error creating post');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -416,6 +464,55 @@ class _SVPostDetailScreenState extends State<SVPostDetailScreen> {
                 child: _buildPostItem(_post, isChild: false, depth: 0),
               ),
             ),
+      // Bottom input for replies / new posts
+      bottomNavigationBar: SafeArea(
+        top: false,
+        child: Container(
+          padding: EdgeInsets.fromLTRB(16, 12, 16, 20), // increased bottom padding
+          decoration: BoxDecoration(
+            color: context.cardColor,
+            boxShadow: [
+              BoxShadow(color: Colors.grey.withOpacity(0.05), blurRadius: 4, offset: Offset(0, -2)),
+            ],
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: AppTextField(
+                  controller: _postController,
+                  focus: _postFocusNode,
+                  textFieldType: TextFieldType.MULTILINE,
+                  decoration: InputDecoration(
+                    hintText: _replyingToPostId != null
+                        ? "Replying to @$_replyingToUsername"
+                        : "What's on your mind?",
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(SVAppCommonRadius),
+                    ),
+                    contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  ),
+                  minLines: 1,
+                  maxLines: 3,
+                ),
+              ),
+              8.width,
+              Container(
+                decoration: BoxDecoration(
+                  color: SVAppColorPrimary,
+                  borderRadius: radius(SVAppCommonRadius),
+                ),
+                child: IconButton(
+                  icon: Icon(Icons.send, color: Colors.white),
+                  onPressed: () => createPost(
+                    _postController.text,
+                    parentId: _replyingToPostId,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

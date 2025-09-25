@@ -68,7 +68,6 @@ class _SVVideoEditorScreenState extends State<SVVideoEditorScreen> {
   TrimData? _trimData;
   Map<String, String>? _selectedSound;
 
-  
   GlobalKey _videoKey = GlobalKey();
   GlobalKey _aspectKey = GlobalKey();
 
@@ -78,6 +77,10 @@ class _SVVideoEditorScreenState extends State<SVVideoEditorScreen> {
   CropData? _appliedCrop;
   String? _activeHandle;
   bool _isProcessingCrop = false;
+
+  // Trim state
+  bool _isTrimming = false;
+  bool _isProcessingTrim = false;
 
   // State variable to control the visibility of the indicator
   bool _showCroppedIndicator = false;
@@ -91,9 +94,17 @@ class _SVVideoEditorScreenState extends State<SVVideoEditorScreen> {
   bool _isUploading = false;
   String? _uploadError;
 
+  // New state variable to track if video is playing
+  bool _isPlaying = false;
+  bool _showPlayButton = true;
+
+  // Store original video path for resetting trim
+  late String _originalVideoPath;
+
   @override
   void initState() {
     super.initState();
+    _originalVideoPath = widget.videoPath;
     _controller = VideoPlayerController.file(File(widget.videoPath))
       ..initialize().then((_) {
         setState(() {
@@ -103,22 +114,93 @@ class _SVVideoEditorScreenState extends State<SVVideoEditorScreen> {
             endValueMs: _controller.value.duration.inMilliseconds,
             maxDurationMs: _controller.value.duration.inMilliseconds,
           );
+          // Auto-play the video when initialized
+          _controller.play();
+          _isPlaying = true;
+          
+          // Hide play button after 2 seconds if video is playing
+          Future.delayed(Duration(seconds: 2), () {
+            if (mounted && _isPlaying) {
+              setState(() {
+                _showPlayButton = false;
+              });
+            }
+          });
         });
       });
+    
+    // Listen to video player state changes
+    _controller.addListener(_videoListener);
     _checkAndStartTimer();
+  }
 
+  void _videoListener() {
+    if (_controller.value.isInitialized) {
+      final isPlaying = _controller.value.isPlaying;
+      if (isPlaying != _isPlaying) {
+        setState(() {
+          _isPlaying = isPlaying;
+          // Show play button when video is paused, hide when playing (with delay)
+          if (!isPlaying) {
+            _showPlayButton = true;
+          } else {
+            // Hide play button after a short delay when video starts playing
+            Future.delayed(Duration(milliseconds: 500), () {
+              if (mounted && _isPlaying) {
+                setState(() {
+                  _showPlayButton = false;
+                });
+              }
+            });
+          }
+        });
+      }
+
+      // Handle trim playback - restart at start position when reaching end during trim mode
+      if (_isTrimming && _trimData != null && isPlaying) {
+        final currentPosition = _controller.value.position.inMilliseconds;
+        if (currentPosition >= _trimData!.endValueMs) {
+          _controller.seekTo(Duration(milliseconds: _trimData!.startValueMs));
+        }
+      }
+    }
   }
 
   @override
   void dispose() {
+    _controller.removeListener(_videoListener);
     _controller.dispose();
     super.dispose();
+  }
+
+  // Toggle play/pause function
+  void _togglePlayPause() {
+    if (_isProcessingCrop || _isProcessingTrim) return;
+    
+    setState(() {
+      if (_controller.value.isPlaying) {
+        _controller.pause();
+        _showPlayButton = true;
+      } else {
+        _controller.play();
+        _showPlayButton = false;
+        
+        // Auto-hide play button after 2 seconds
+        Future.delayed(Duration(seconds: 2), () {
+          if (mounted && _controller.value.isPlaying) {
+            setState(() {
+              _showPlayButton = false;
+            });
+          }
+        });
+      }
+    });
   }
 
   // Method to get authentication token
   Future<String?> _getAuthToken() async {
     final prefs = await SharedPreferences.getInstance();
-    return prefs.getString('auth_token'); // Adjust this based on your auth storage
+    return prefs.getString('auth_token');
   }
 
   Future<void> _uploadVideo() async {
@@ -130,7 +212,6 @@ class _SVVideoEditorScreenState extends State<SVVideoEditorScreen> {
     });
 
     try {
-      // Get the current video file path
       String videoPath = _controller.dataSource;
       if (videoPath.startsWith('file://')) {
         videoPath = videoPath.substring(7);
@@ -142,56 +223,39 @@ class _SVVideoEditorScreenState extends State<SVVideoEditorScreen> {
         throw Exception('Video file not found at path: $videoPath');
       }
 
-      // Get authentication token
       String? token = await _getAuthToken();
       if (token == null) {
         throw Exception('Please login to upload video');
       }
 
-      // Create multipart request
       var request = http.MultipartRequest(
         'POST',
         Uri.parse('http://10.0.0.158:8000/api/videos/upload/'),
       );
 
-      // Add headers
       request.headers['Authorization'] = 'Bearer $token';
       request.headers['Accept'] = 'application/json';
 
-      // Add video file
       request.files.add(await http.MultipartFile.fromPath(
         'video',
         videoPath,
         filename: 'edited_video_${DateTime.now().millisecondsSinceEpoch}.mp4',
       ));
 
-      // Add other form data
       request.fields['title'] = 'Edited Video ${DateTime.now().toString()}';
       request.fields['description'] = 'Video edited in BBDSocial app';
 
-      print('Starting upload...'); // Debug
-      print('Video path: $videoPath'); // Debug
-      print('File exists: ${await videoFile.exists()}'); // Debug
-      print('File size: ${(await videoFile.stat()).size}'); // Debug
-
-      // Send request
       final response = await request.send();
       final responseString = await response.stream.bytesToString();
       
-      print('Response status: ${response.statusCode}'); // Debug
-      print('Response body: $responseString'); // Debug
-
       if (response.statusCode == 201) {
         final jsonResponse = json.decode(responseString);
-        
         toast('Video uploaded successfully!');
         
-        // Navigate back or to success screen
         if (mounted) {
           Navigator.of(context).pop(true);
         }
       } else {
-        // Try to parse error message
         try {
           final errorResponse = json.decode(responseString);
           throw Exception('Upload failed: ${errorResponse['error'] ?? responseString}');
@@ -214,9 +278,7 @@ class _SVVideoEditorScreenState extends State<SVVideoEditorScreen> {
     }
   }
 
-  // Updated _handlePost method
   void _handlePost() async {
-    // Show confirmation dialog before uploading
     bool confirmUpload = await showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -239,16 +301,14 @@ class _SVVideoEditorScreenState extends State<SVVideoEditorScreen> {
       await _uploadVideo();
     }
   }
+
   void _checkAndStartTimer() {
     if (_appliedCrop != null && !_isProcessingCrop) {
-      // Set state to true to immediately show the indicator
       setState(() {
         _showCroppedIndicator = true;
       });
 
-      // Start a 5-second timer
       Future.delayed(const Duration(seconds: 5), () {
-        // Only update the state if the widget is still in the widget tree
         if (mounted) {
           setState(() {
             _showCroppedIndicator = false;
@@ -257,186 +317,253 @@ class _SVVideoEditorScreenState extends State<SVVideoEditorScreen> {
       });
     }
   }
-void _onAddText() {
-  String newText = 'Your Text Here';
-  
-  // Use rootNavigator: true to ensure the dialog is shown above all other content
-  showDialog(
-    context: context,
-    builder: (BuildContext context) {
-      String currentText = newText;
-      Color currentColor = _selectedColor;
-      double currentFontSize = _selectedFontSize;
-      String currentFont = _selectedFont;
-      FontWeight currentFontWeight = _selectedFontWeight;
 
-      return StatefulBuilder(
-        builder: (context, setState) {
-          return AlertDialog(
-            title: Text('Add Text'),
-            content: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  TextField(
-                    autofocus: true,
-                    decoration: InputDecoration(hintText: 'Enter text'),
-                    onChanged: (value) => currentText = value,
-                  ),
-                  SizedBox(height: 16),
-                  _buildColorSelector(setState, currentColor, (color) => currentColor = color),
-                  SizedBox(height: 16),
-                  _buildFontSizeSelector(setState, currentFontSize, (size) => currentFontSize = size),
-                  SizedBox(height: 16),
-                  _buildFontSelector(setState, currentFont, (font) => currentFont = font),
-                  SizedBox(height: 16),
-                  _buildFontWeightSelector(setState, currentFontWeight, (weight) => currentFontWeight = weight),
-                ],
-              ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(),
-                child: Text('Cancel'),
-              ),
-              TextButton(
-                onPressed: () {
-                  // Update the main state variables before popping
-                  setState(() {
-                    _selectedColor = currentColor;
-                    _selectedFontSize = currentFontSize;
-                    _selectedFont = currentFont;
-                    _selectedFontWeight = currentFontWeight;
-                  });
-                  
-                  // Add the text overlay and then pop the dialog
-                  setState(() {
-                    _textOverlays.add(TextOverlay(
-                      text: currentText,
-                      position: Offset(MediaQuery.of(context).size.width * 0.1, 
-                                      MediaQuery.of(context).size.height * 0.1),
-                      style: TextStyle(
-                        color: currentColor,
-                        fontSize: currentFontSize,
-                        fontWeight: currentFontWeight,
-                        fontFamily: currentFont,
-                        shadows: [Shadow(blurRadius: 2, color: Colors.black, offset: Offset(1, 1))],
-                      ),
-                    ));
-                  });
-                  
-                  Navigator.of(context).pop();
-                },
-                child: Text('Add'),
-              ),
-            ],
-          );
-        },
-      );
-    },
-  ).then((_) {
-    // Reset active tool after dialog is closed
+  // Handle trim application
+  void _handleTrim() async {
+    if (_trimData == null) return;
+
     setState(() {
+      _isProcessingTrim = true;
+      _isTrimming = false;
+    });
+
+    try {
+      final tempDir = await getTemporaryDirectory();
+      final outPath = '${tempDir.path}/trimmed_${DateTime.now().millisecondsSinceEpoch}.mp4';
+
+      // Calculate start and duration in seconds
+      final startSeconds = _trimData!.startValueMs / 1000;
+      final durationSeconds = (_trimData!.endValueMs - _trimData!.startValueMs) / 1000;
+
+      final cmd = '-i "$_originalVideoPath" -ss $startSeconds -t $durationSeconds -c copy "$outPath"';
+      toast('Trimming video...');
+      
+      await FFmpegKit.executeAsync(cmd, (session) async {
+        final returnCode = await session.getReturnCode();
+        if (returnCode != null && returnCode.isValueSuccess()) {
+          await _controller.pause();
+          await _controller.dispose();
+          
+          _controller = VideoPlayerController.file(File(outPath))
+            ..initialize().then((_) {
+              setState(() {
+                _isProcessingTrim = false;
+                // Update trim data to reflect new video duration
+                _trimData = TrimData(
+                  startValueMs: 0,
+                  endValueMs: _controller.value.duration.inMilliseconds,
+                  maxDurationMs: _controller.value.duration.inMilliseconds,
+                );
+              });
+              _controller.setLooping(true);
+              _controller.play();
+              _isPlaying = true;
+              toast('Trim finished successfully');
+            });
+        } else {
+          setState(() => _isProcessingTrim = false);
+          toast('Trim failed. Please try again.');
+        }
+      });
+    } catch (e) {
+      setState(() => _isProcessingTrim = false);
+      toast('Trim error: $e');
+    }
+  }
+
+  // Reset trim to original video
+  void _resetTrim() {
+    setState(() {
+      _isTrimming = false;
+      // Reset trim data to original video duration
+      if (_controller.value.isInitialized) {
+        _trimData = TrimData(
+          startValueMs: 0,
+          endValueMs: _controller.value.duration.inMilliseconds,
+          maxDurationMs: _controller.value.duration.inMilliseconds,
+        );
+      }
       _activeTool = EditorTool.none;
     });
-  });
-}
+  }
 
-Widget _buildColorSelector(void Function(void Function()) setState, Color currentColor, Function(Color) onChanged) {
-  return Row(
-    children: [
-      Text('Color: '),
-      DropdownButton<Color>(
-        value: currentColor,
-        onChanged: (Color? newValue) {
-          setState(() {});
-          onChanged(newValue!);
-        },
-        items: [
-          Colors.white, Colors.black, Colors.red, 
-          Colors.green, Colors.blue, Colors.yellow,
-        ].map<DropdownMenuItem<Color>>((Color value) {
-          return DropdownMenuItem<Color>(
-            value: value,
-            child: Row(
-              children: [
-                Container(width: 20, height: 20, color: value),
-                SizedBox(width: 8),
-                Text(_colorLabel(value)),
+  void _onAddText() {
+    String newText = 'Your Text Here';
+    
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        String currentText = newText;
+        Color currentColor = _selectedColor;
+        double currentFontSize = _selectedFontSize;
+        String currentFont = _selectedFont;
+        FontWeight currentFontWeight = _selectedFontWeight;
+
+        return StatefulBuilder(
+          builder: (context, setState) {
+            return AlertDialog(
+              title: Text('Add Text'),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextField(
+                      autofocus: true,
+                      decoration: InputDecoration(hintText: 'Enter text'),
+                      onChanged: (value) => currentText = value,
+                    ),
+                    SizedBox(height: 16),
+                    _buildColorSelector(setState, currentColor, (color) => currentColor = color),
+                    SizedBox(height: 16),
+                    _buildFontSizeSelector(setState, currentFontSize, (size) => currentFontSize = size),
+                    SizedBox(height: 16),
+                    _buildFontSelector(setState, currentFont, (font) => currentFont = font),
+                    SizedBox(height: 16),
+                    _buildFontWeightSelector(setState, currentFontWeight, (weight) => currentFontWeight = weight),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: Text('Cancel'),
+                ),
+                TextButton(
+                  onPressed: () {
+                    setState(() {
+                      _selectedColor = currentColor;
+                      _selectedFontSize = currentFontSize;
+                      _selectedFont = currentFont;
+                      _selectedFontWeight = currentFontWeight;
+                    });
+                    
+                    setState(() {
+                      _textOverlays.add(TextOverlay(
+                        text: currentText,
+                        position: Offset(MediaQuery.of(context).size.width * 0.1, 
+                                        MediaQuery.of(context).size.height * 0.1),
+                        style: TextStyle(
+                          color: currentColor,
+                          fontSize: currentFontSize,
+                          fontWeight: currentFontWeight,
+                          fontFamily: currentFont,
+                          shadows: [Shadow(blurRadius: 2, color: Colors.black, offset: Offset(1, 1))],
+                        ),
+                      ));
+                    });
+                    
+                    Navigator.of(context).pop();
+                  },
+                  child: Text('Add'),
+                ),
               ],
-            ),
-          );
-        }).toList(),
-      ),
-    ],
-  );
-}
-
-Widget _buildFontSizeSelector(void Function(void Function()) setState, double currentFontSize, Function(double) onChanged) {
-  return Row(
-    children: [
-      Text('Font Size: '),
-      Expanded(
-        child: Slider(
-          value: currentFontSize,
-          min: 12,
-          max: 48,
-          divisions: 9,
-          onChanged: (double value) {
-            setState(() {});
-            onChanged(value);
+            );
           },
+        );
+      },
+    ).then((_) {
+      setState(() {
+        _activeTool = EditorTool.none;
+      });
+    });
+  }
+
+  // ... (Keep all your existing helper methods: _buildColorSelector, _buildFontSizeSelector, etc.)
+  Widget _buildColorSelector(void Function(void Function()) setState, Color currentColor, Function(Color) onChanged) {
+    return Row(
+      children: [
+        Text('Color: '),
+        DropdownButton<Color>(
+          value: currentColor,
+          onChanged: (Color? newValue) {
+            setState(() {});
+            onChanged(newValue!);
+          },
+          items: [
+            Colors.white, Colors.black, Colors.red, 
+            Colors.green, Colors.blue, Colors.yellow,
+          ].map<DropdownMenuItem<Color>>((Color value) {
+            return DropdownMenuItem<Color>(
+              value: value,
+              child: Row(
+                children: [
+                  Container(width: 20, height: 20, color: value),
+                  SizedBox(width: 8),
+                  Text(_colorLabel(value)),
+                ],
+              ),
+            );
+          }).toList(),
         ),
-      ),
-      SizedBox(width: 8),
-      SizedBox(width: 40, child: Text('${currentFontSize.round()}', textAlign: TextAlign.center)),
-    ],
-  );
-}
+      ],
+    );
+  }
 
-Widget _buildFontSelector(void Function(void Function()) setState, String currentFont, Function(String) onChanged) {
-  return Row(
-    children: [
-      Text('Font: '),
-      DropdownButton<String>(
-        value: currentFont,
-        onChanged: (String? newValue) {
-          setState(() {});
-          onChanged(newValue!);
-        },
-        items: <String>['Roboto', 'Arial', 'Times New Roman', 'Courier New']
-            .map<DropdownMenuItem<String>>((String value) {
-          return DropdownMenuItem<String>(value: value, child: Text(value));
-        }).toList(),
-      ),
-    ],
-  );
-}
+  Widget _buildFontSizeSelector(void Function(void Function()) setState, double currentFontSize, Function(double) onChanged) {
+    return Row(
+      children: [
+        Text('Font Size: '),
+        Expanded(
+          child: Slider(
+            value: currentFontSize,
+            min: 12,
+            max: 48,
+            divisions: 9,
+            onChanged: (double value) {
+              setState(() {});
+              onChanged(value);
+            },
+          ),
+        ),
+        SizedBox(width: 8),
+        SizedBox(width: 40, child: Text('${currentFontSize.round()}', textAlign: TextAlign.center)),
+      ],
+    );
+  }
 
-Widget _buildFontWeightSelector(void Function(void Function()) setState, FontWeight currentFontWeight, Function(FontWeight) onChanged) {
-  return Row(
-    children: [
-      Text('Font Weight: '),
-      DropdownButton<FontWeight>(
-        value: currentFontWeight,
-        onChanged: (FontWeight? newValue) {
-          setState(() {});
-          onChanged(newValue!);
-        },
-        items: [
-          FontWeight.w100, FontWeight.w200, FontWeight.w300,
-          FontWeight.w400, FontWeight.w500, FontWeight.w600,
-          FontWeight.w700, FontWeight.w800, FontWeight.w900,
-        ].map<DropdownMenuItem<FontWeight>>((FontWeight value) {
-          return DropdownMenuItem<FontWeight>(
-            value: value,
-            child: Text(_fontWeightLabel(value)),
-          );
-        }).toList(),
-      ),
-    ],
-  );
-}
+  Widget _buildFontSelector(void Function(void Function()) setState, String currentFont, Function(String) onChanged) {
+    return Row(
+      children: [
+        Text('Font: '),
+        DropdownButton<String>(
+          value: currentFont,
+          onChanged: (String? newValue) {
+            setState(() {});
+            onChanged(newValue!);
+          },
+          items: <String>['Roboto', 'Arial', 'Times New Roman', 'Courier New']
+              .map<DropdownMenuItem<String>>((String value) {
+            return DropdownMenuItem<String>(value: value, child: Text(value));
+          }).toList(),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildFontWeightSelector(void Function(void Function()) setState, FontWeight currentFontWeight, Function(FontWeight) onChanged) {
+    return Row(
+      children: [
+        Text('Font Weight: '),
+        DropdownButton<FontWeight>(
+          value: currentFontWeight,
+          onChanged: (FontWeight? newValue) {
+            setState(() {});
+            onChanged(newValue!);
+          },
+          items: [
+            FontWeight.w100, FontWeight.w200, FontWeight.w300,
+            FontWeight.w400, FontWeight.w500, FontWeight.w600,
+            FontWeight.w700, FontWeight.w800, FontWeight.w900,
+          ].map<DropdownMenuItem<FontWeight>>((FontWeight value) {
+            return DropdownMenuItem<FontWeight>(
+              value: value,
+              child: Text(_fontWeightLabel(value)),
+            );
+          }).toList(),
+        ),
+      ],
+    );
+  }
 
   String _fontWeightLabel(FontWeight w) {
     switch (w) {
@@ -475,71 +602,50 @@ Widget _buildFontWeightSelector(void Function(void Function()) setState, FontWei
       return;
     }
 
-    // Get the actual video dimensions from the controller
     final videoWidth = _controller.value.size.width;
     final videoHeight = _controller.value.size.height;
-    print('Video dimensions: width=$videoWidth, height=$videoHeight');
     
-    // Get the displayed video container dimensions
     final displaySize = renderBox.size;
-    print('Display dimensions: width=${displaySize.width}, height=${displaySize.height}');
     
-    // Calculate the actual video content area within the display
     final videoAspect = videoWidth / videoHeight;
     final displayAspect = displaySize.width / displaySize.height;
     
     double contentWidth, contentHeight, contentX, contentY;
     
     if (videoAspect > displayAspect) {
-      // Video is wider than display - letterboxing on top and bottom
       contentWidth = displaySize.width;
       contentHeight = displaySize.width / videoAspect;
       contentX = 0;
       contentY = (displaySize.height - contentHeight) / 2;
     } else {
-      // Video is taller than display - pillarboxing on sides
       contentHeight = displaySize.height;
       contentWidth = displaySize.height * videoAspect;
       contentX = (displaySize.width - contentWidth) / 2;
       contentY = 0;
     }
     
-    print('Content area: x=$contentX, y=$contentY, width=$contentWidth, height=$contentHeight');
-    print('Crop rect: left=${_cropRect!.left}, top=${_cropRect!.top}, right=${_cropRect!.right}, bottom=${_cropRect!.bottom}');
-    
-    // Ensure crop rectangle is within the video content area
     final clampedLeft = _cropRect!.left.clamp(contentX, contentX + contentWidth);
     final clampedTop = _cropRect!.top.clamp(contentY, contentY + contentHeight);
     final clampedRight = _cropRect!.right.clamp(contentX, contentX + contentWidth);
     final clampedBottom = _cropRect!.bottom.clamp(contentY, contentY + contentHeight);
     
-    // Convert to relative coordinates within the video content area
     final relativeLeft = (clampedLeft - contentX) / contentWidth;
     final relativeTop = (clampedTop - contentY) / contentHeight;
     final relativeRight = (clampedRight - contentX) / contentWidth;
     final relativeBottom = (clampedBottom - contentY) / contentHeight;
     
-    print('Relative coordinates: left=$relativeLeft, top=$relativeTop, right=$relativeRight, bottom=$relativeBottom');
-    
-    // Convert to actual video coordinates
     final cropX = (relativeLeft * videoWidth).round();
     final cropY = (relativeTop * videoHeight).round();
     final cropW = ((relativeRight - relativeLeft) * videoWidth).round();
     final cropH = ((relativeBottom - relativeTop) * videoHeight).round();
 
-    print('Final crop coordinates: x=$cropX, y=$cropY, width=$cropW, height=$cropH');
-    print('Video bounds: width=$videoWidth, height=$videoHeight');
-
-    // Validate crop dimensions
     if (cropW <= 0 || cropH <= 0 || cropX < 0 || cropY < 0 || 
         cropX + cropW > videoWidth || cropY + cropH > videoHeight) {
-      print('Invalid crop area: width=$cropW, height=$cropH, x=$cropX, y=$cropY');
       toast('Invalid crop area. Please select a smaller area.');
       setState(() => _isCropping = false);
       return;
     }
 
-    // Ensure minimum crop size
     if (cropW < 50 || cropH < 50) {
       toast('Crop area is too small. Please select a larger area.');
       setState(() => _isCropping = false);
@@ -555,22 +661,18 @@ Widget _buildFontWeightSelector(void Function(void Function()) setState, FontWei
       final tempDir = await getTemporaryDirectory();
       final outPath = '${tempDir.path}/cropped_${DateTime.now().millisecondsSinceEpoch}.mp4';
 
-      final cmd = '-i "${widget.videoPath}" -filter:v "crop=$cropW:$cropH:$cropX:$cropY" -c:a copy "$outPath"';
-      print('FFmpeg command: $cmd');
+      final cmd = '-i "$_originalVideoPath" -filter:v "crop=$cropW:$cropH:$cropX:$cropY" -c:a copy "$outPath"';
       toast('Cropping video...');
       
       await FFmpegKit.executeAsync(cmd, (session) async {
         final returnCode = await session.getReturnCode();
         if (returnCode != null && returnCode.isValueSuccess()) {
-          // Store crop data for reference
           final cropData = CropData(
             left: relativeLeft,
             top: relativeTop,
             right: relativeRight,
             bottom: relativeBottom,
           );
-          
-          print('Crop successful. Data: $cropData');
           
           await _controller.pause();
           await _controller.dispose();
@@ -582,12 +684,18 @@ Widget _buildFontWeightSelector(void Function(void Function()) setState, FontWei
                 _cropRect = null;
                 _appliedCrop = cropData;
                 _showCroppedIndicator = true;
+                // Update trim data for new video
+                _trimData = TrimData(
+                  startValueMs: 0,
+                  endValueMs: _controller.value.duration.inMilliseconds,
+                  maxDurationMs: _controller.value.duration.inMilliseconds,
+                );
               });
               _controller.setLooping(true);
               _controller.play();
+              _isPlaying = true;
               toast('Crop finished successfully');
               
-              // Hide indicator after 5 seconds
               Future.delayed(Duration(seconds: 5), () {
                 if (mounted) {
                   setState(() {
@@ -597,29 +705,24 @@ Widget _buildFontWeightSelector(void Function(void Function()) setState, FontWei
               });
             });
         } else {
-          final log = await session.getLogs();
-          print('FFmpeg error: $log');
           setState(() => _isProcessingCrop = false);
           toast('Crop failed. Please try again.');
         }
       });
     } catch (e) {
-      print('Crop error: $e');
       setState(() => _isProcessingCrop = false);
       toast('Crop error: $e');
     }
   }
 
+  // ... (Keep all your existing crop handle methods: _buildCropHandles, _buildCornerHandles, etc.)
   Widget _buildCropHandles(double width, double height) {
     if (_cropRect == null) return SizedBox.shrink();
 
     return Stack(
       children: [
-        // Corner handles
         ..._buildCornerHandles(width, height),
-        // Edge handles
         ..._buildEdgeHandles(width, height),
-        // Move area
         Positioned(
           left: _cropRect!.left + 10,
           top: _cropRect!.top + 10,
@@ -646,26 +749,18 @@ Widget _buildFontWeightSelector(void Function(void Function()) setState, FontWei
 
   List<Widget> _buildCornerHandles(double width, double height) {
     return [
-      // Top-left
       _buildHandle(_cropRect!.left - 12, _cropRect!.top - 12, 'tl', width, height),
-      // Top-right
       _buildHandle(_cropRect!.right - 12, _cropRect!.top - 12, 'tr', width, height),
-      // Bottom-left
       _buildHandle(_cropRect!.left - 12, _cropRect!.bottom - 12, 'bl', width, height),
-      // Bottom-right
       _buildHandle(_cropRect!.right - 12, _cropRect!.bottom - 12, 'br', width, height),
     ];
   }
 
   List<Widget> _buildEdgeHandles(double width, double height) {
     return [
-      // Top
       _buildHandle(_cropRect!.left + _cropRect!.width / 2 - 12, _cropRect!.top - 12, 't', width, height),
-      // Bottom
       _buildHandle(_cropRect!.left + _cropRect!.width / 2 - 12, _cropRect!.bottom - 12, 'b', width, height),
-      // Left
       _buildHandle(_cropRect!.left - 12, _cropRect!.top + _cropRect!.height / 2 - 12, 'l', width, height),
-      // Right
       _buildHandle(_cropRect!.right - 12, _cropRect!.top + _cropRect!.height / 2 - 12, 'r', width, height),
     ];
   }
@@ -788,6 +883,15 @@ Widget _buildFontWeightSelector(void Function(void Function()) setState, FontWei
                 ],
               ),
             ),
+          ] else if (_isTrimming) ...[
+            TextButton(
+              onPressed: _resetTrim,
+              child: Text('Cancel', style: TextStyle(color: Colors.white)),
+            ),
+            TextButton(
+              onPressed: _handleTrim,
+              child: Text('Apply', style: TextStyle(color: Colors.white)),
+            ),
           ] else if (_isCropping) ...[
             TextButton(
               onPressed: () => setState(() {
@@ -800,7 +904,7 @@ Widget _buildFontWeightSelector(void Function(void Function()) setState, FontWei
               onPressed: _handleCrop,
               child: Text('Done', style: TextStyle(color: Colors.white)),
             ),
-          ] else if (!_isProcessingCrop) ...[
+          ] else if (!_isProcessingCrop && !_isProcessingTrim) ...[
             AppButton(
               shapeBorder: RoundedRectangleBorder(borderRadius: radius(4)),
               text: 'Post',
@@ -844,37 +948,36 @@ Widget _buildFontWeightSelector(void Function(void Function()) setState, FontWei
 
                                   return Stack(
                                     children: [
-                                        // Add this to your Stack children in the build method, right before the processing crop overlay:
-                                        if (_uploadError != null && !_isUploading)
+                                      if (_uploadError != null && !_isUploading)
                                         Positioned(
                                           top: 100,
                                           left: 20,
                                           right: 20,
                                           child: Container(
-                                          padding: EdgeInsets.all(12),
-                                          decoration: BoxDecoration(
-                                            color: Colors.red.withOpacity(0.8),
-                                            borderRadius: BorderRadius.circular(8),
-                                          ),
-                                          child: Row(
-                                            children: [
-                                            Icon(Icons.error, color: Colors.white),
-                                            SizedBox(width: 8),
-                                            Expanded(
-                                              child: Text(
-                                              _uploadError!,
-                                              style: TextStyle(color: Colors.white),
-                                              maxLines: 2,
-                                              ),
+                                            padding: EdgeInsets.all(12),
+                                            decoration: BoxDecoration(
+                                              color: Colors.red.withOpacity(0.8),
+                                              borderRadius: BorderRadius.circular(8),
                                             ),
-                                            IconButton(
-                                              icon: Icon(Icons.close, color: Colors.white),
-                                              onPressed: () => setState(() => _uploadError = null),
-                                              padding: EdgeInsets.zero,
-                                              iconSize: 20,
+                                            child: Row(
+                                              children: [
+                                                Icon(Icons.error, color: Colors.white),
+                                                SizedBox(width: 8),
+                                                Expanded(
+                                                  child: Text(
+                                                    _uploadError!,
+                                                    style: TextStyle(color: Colors.white),
+                                                    maxLines: 2,
+                                                  ),
+                                                ),
+                                                IconButton(
+                                                  icon: Icon(Icons.close, color: Colors.white),
+                                                  onPressed: () => setState(() => _uploadError = null),
+                                                  padding: EdgeInsets.zero,
+                                                  iconSize: 20,
+                                                ),
+                                              ],
                                             ),
-                                            ],
-                                          ),
                                           ),
                                         ),
                                       Positioned(
@@ -883,13 +986,18 @@ Widget _buildFontWeightSelector(void Function(void Function()) setState, FontWei
                                         width: width,
                                         height: height,
                                         child: GestureDetector(
+                                          onTap: () {
+                                            // Only toggle play/pause if not cropping and not processing
+                                            if (!_isCropping && !_isProcessingCrop && !_isProcessingTrim) {
+                                              _togglePlayPause();
+                                            }
+                                          },
                                           onTapDown: (details) {
-                                            if (_activeTool == EditorTool.crop && !_isProcessingCrop) {
+                                            if (_activeTool == EditorTool.crop && !_isProcessingCrop && !_isProcessingTrim) {
                                               final local = details.localPosition;
                                               if (_cropRect == null) {
                                                 setState(() {
                                                   _isCropping = true;
-                                                  // Use proportional sizing based on video dimensions
                                                   final defaultW = width * 0.7;
                                                   final defaultH = height * 0.7;
                                                   final leftPos = (local.dx - defaultW / 2).clamp(0.0, width - defaultW);
@@ -903,6 +1011,26 @@ Widget _buildFontWeightSelector(void Function(void Function()) setState, FontWei
                                             fit: StackFit.expand,
                                             children: [
                                               VideoPlayer(_controller),
+                                              // Transparent play button overlay
+                                              if (_showPlayButton && !_isCropping && !_isProcessingCrop && !_isProcessingTrim)
+                                                Container(
+                                                  color: Colors.black.withOpacity(0.3),
+                                                  child: Center(
+                                                    child: Container(
+                                                      width: 80,
+                                                      height: 80,
+                                                      decoration: BoxDecoration(
+                                                        color: Colors.black.withOpacity(0.5),
+                                                        shape: BoxShape.circle,
+                                                      ),
+                                                      child: Icon(
+                                                        _isPlaying ? Icons.pause : Icons.play_arrow,
+                                                        size: 40,
+                                                        color: Colors.white.withOpacity(0.8),
+                                                      ),
+                                                    ),
+                                                  ),
+                                                ),
                                               if (_cropRect != null && !_isProcessingCrop) ...[
                                                 CustomPaint(painter: _CropPainter(_cropRect!)),
                                                 _buildCropHandles(width, height),
@@ -956,8 +1084,7 @@ Widget _buildFontWeightSelector(void Function(void Function()) setState, FontWei
                                 ),
                               );
                             }).toList(),
-                            // FIX: Show sound bar regardless of active tool, only check if sound is selected
-                            if (_selectedSound != null && !_isProcessingCrop)
+                            if (_selectedSound != null && !_isProcessingCrop && !_isProcessingTrim)
                               Positioned(
                                 top: 12,
                                 left: 12,
@@ -1009,7 +1136,7 @@ Widget _buildFontWeightSelector(void Function(void Function()) setState, FontWei
                               ),
                             if (_showCroppedIndicator)
                               Positioned(
-                                top: _selectedSound != null ? 70 : 12, // Adjust position if sound bar is visible
+                                top: _selectedSound != null ? 70 : 12,
                                 right: 12,
                                 child: Container(
                                   padding: EdgeInsets.symmetric(horizontal: 10, vertical: 6),
@@ -1033,7 +1160,8 @@ Widget _buildFontWeightSelector(void Function(void Function()) setState, FontWei
                       )
                     : Center(child: CircularProgressIndicator()),
               ),
-              if (_controller.value.isInitialized && _trimData != null && !_isProcessingCrop)
+              // Show timeline only when trim tool is active
+              if (_controller.value.isInitialized && _trimData != null && _isTrimming && !_isProcessingTrim)
                 SVVideoTimeline(
                   controller: _controller,
                   trimData: _trimData!,
@@ -1042,12 +1170,14 @@ Widget _buildFontWeightSelector(void Function(void Function()) setState, FontWei
                       _trimData!.startValueMs = start;
                       _trimData!.endValueMs = end;
                     });
+                    // Seek to start position when trim changes
+                    _controller.seekTo(Duration(milliseconds: start));
                   },
                 ),
-              if (!_isProcessingCrop) _buildEditingToolbar(),
+              if (!_isProcessingCrop && !_isProcessingTrim) _buildEditingToolbar(),
             ],
           ),
-          if (_isProcessingCrop)
+          if (_isProcessingCrop || _isProcessingTrim)
             Container(
               color: Colors.black.withOpacity(0.7),
               child: Center(
@@ -1056,7 +1186,10 @@ Widget _buildFontWeightSelector(void Function(void Function()) setState, FontWei
                   children: [
                     CircularProgressIndicator(valueColor: AlwaysStoppedAnimation<Color>(SVAppColorPrimary)),
                     SizedBox(height: 16),
-                    Text('Processing crop...', style: TextStyle(color: Colors.white)),
+                    Text(
+                      _isProcessingCrop ? 'Processing crop...' : 'Processing trim...', 
+                      style: TextStyle(color: Colors.white)
+                    ),
                   ],
                 ),
               ),
@@ -1066,46 +1199,79 @@ Widget _buildFontWeightSelector(void Function(void Function()) setState, FontWei
     );
   }
 
-Widget _buildEditingToolbar() {
-  return Container(
-    color: Colors.black,
-    padding: EdgeInsets.symmetric(vertical: 16),
-    child: Row(
-      mainAxisAlignment: MainAxisAlignment.spaceAround,
-      children: [
-        _buildToolButton(Icons.content_cut, 'Trim', EditorTool.trim),
-        
-        _buildToolButton(Icons.text_fields, 'Text', EditorTool.text, onTap: () {
-          // Ensure we're using the correct context and not popping any routes accidentally
-          // WidgetsBinding.instance.addPostFrameCallback((_) {
-          //   _onAddText();
-          // });
-          _onAddText();
-
-        }),
-        // _buildToolButton(Icons.text_fields, 'Text', EditorTool.text, onTap: _onAddText),
-
-        _buildToolButton(Icons.music_note, 'Sound', EditorTool.none, onTap: () async {
-          final result = await showModalBottomSheet<Map<String, String>>(
-            context: context,
-            builder: (bCtx) => SVSoundSelectionComponent(),
-          );
-          if (result != null) {
+  Widget _buildEditingToolbar() {
+    return Container(
+      color: Colors.black,
+      padding: EdgeInsets.symmetric(vertical: 16),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceAround,
+        children: [
+          _buildToolButton(Icons.content_cut, 'Trim', EditorTool.trim, onTap: () {
             setState(() {
-              _selectedSound = result;
-              // Reset active tool after selecting sound
-              _activeTool = EditorTool.none;
+              if (_activeTool == EditorTool.trim) {
+                // If already in trim mode, exit it
+                _isTrimming = false;
+                _activeTool = EditorTool.none;
+              } else {
+                // Enter trim mode
+                _activeTool = EditorTool.trim;
+                _isTrimming = true;
+                _isCropping = false;
+                // Seek to start of trim range
+                if (_trimData != null) {
+                  _controller.seekTo(Duration(milliseconds: _trimData!.startValueMs));
+                }
+              }
             });
-          }
-        }),
-        _buildToolButton(Icons.crop, 'Crop', EditorTool.crop),
-      ],
-    ),
-  );
-}
+          }),
+          _buildToolButton(Icons.text_fields, 'Text', EditorTool.text, onTap: _onAddText),
+          _buildToolButton(Icons.music_note, 'Sound', EditorTool.none, onTap: () async {
+            final result = await showModalBottomSheet<Map<String, String>>(
+              context: context,
+              builder: (bCtx) => SVSoundSelectionComponent(),
+            );
+            if (result != null) {
+              setState(() {
+                _selectedSound = result;
+                _activeTool = EditorTool.none;
+                _isTrimming = false;
+                _isCropping = false;
+              });
+            }
+          }),
+          _buildToolButton(Icons.crop, 'Crop', EditorTool.crop, onTap: () {
+            setState(() {
+              if (_activeTool == EditorTool.crop) {
+                // If already in crop mode, exit it
+                _isCropping = false;
+                _cropRect = null;
+                _activeTool = EditorTool.none;
+              } else {
+                // Enter crop mode
+                _activeTool = EditorTool.crop;
+                _isCropping = false; // Will be set to true when user taps on video
+                _isTrimming = false;
+              }
+            });
+          }),
+        ],
+      ),
+    );
+  }
 
   Widget _buildToolButton(IconData icon, String label, EditorTool tool, {VoidCallback? onTap}) {
     bool isSelected = _activeTool == tool;
+    bool isActive = false;
+    
+    // Special handling for trim and crop to show active state when in their modes
+    if (tool == EditorTool.trim && _isTrimming) {
+      isSelected = true;
+      isActive = true;
+    } else if (tool == EditorTool.crop && _isCropping) {
+      isSelected = true;
+      isActive = true;
+    }
+    
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -1113,7 +1279,9 @@ Widget _buildEditingToolbar() {
           icon: Icon(icon, color: isSelected ? SVAppColorPrimary : Colors.white),
           onPressed: onTap ?? () => setState(() => _activeTool = tool),
         ),
-        Text(label, style: secondaryTextStyle(color: isSelected ? SVAppColorPrimary : Colors.white70)),
+        Text(label, style: secondaryTextStyle(
+          color: isActive ? SVAppColorPrimary : (isSelected ? SVAppColorPrimary : Colors.white70)
+        )),
       ],
     );
   }
