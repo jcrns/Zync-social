@@ -121,7 +121,6 @@ class _SVVideoEditorScreenState extends State<SVVideoEditorScreen> {
     return prefs.getString('auth_token'); // Adjust this based on your auth storage
   }
 
-  // Method to upload the final edited video
   Future<void> _uploadVideo() async {
     if (_isUploading) return;
 
@@ -140,7 +139,7 @@ class _SVVideoEditorScreenState extends State<SVVideoEditorScreen> {
       File videoFile = File(videoPath);
       
       if (!await videoFile.exists()) {
-        throw Exception('Video file not found');
+        throw Exception('Video file not found at path: $videoPath');
       }
 
       // Get authentication token
@@ -152,19 +151,12 @@ class _SVVideoEditorScreenState extends State<SVVideoEditorScreen> {
       // Create multipart request
       var request = http.MultipartRequest(
         'POST',
-        Uri.parse('https://your-domain.com/api/videos/upload/'), // Replace with your actual API URL
+        Uri.parse('http://10.0.0.158:8000/api/videos/upload/'),
       );
-
-      // To track progress, you can use a StreamedRequest and listen to its progress
-      final streamedRequest = request.send();
-      streamedRequest.asStream().listen((response) {
-        response.stream.listen((chunk) {
-          // Handle progress updates here if needed
-        });
-      });
 
       // Add headers
       request.headers['Authorization'] = 'Bearer $token';
+      request.headers['Accept'] = 'application/json';
 
       // Add video file
       request.files.add(await http.MultipartFile.fromPath(
@@ -177,22 +169,35 @@ class _SVVideoEditorScreenState extends State<SVVideoEditorScreen> {
       request.fields['title'] = 'Edited Video ${DateTime.now().toString()}';
       request.fields['description'] = 'Video edited in BBDSocial app';
 
+      print('Starting upload...'); // Debug
+      print('Video path: $videoPath'); // Debug
+      print('File exists: ${await videoFile.exists()}'); // Debug
+      print('File size: ${(await videoFile.stat()).size}'); // Debug
+
       // Send request
       final response = await request.send();
+      final responseString = await response.stream.bytesToString();
+      
+      print('Response status: ${response.statusCode}'); // Debug
+      print('Response body: $responseString'); // Debug
 
       if (response.statusCode == 201) {
-        final responseData = await response.stream.bytesToString();
-        final jsonResponse = json.decode(responseData);
+        final jsonResponse = json.decode(responseString);
         
         toast('Video uploaded successfully!');
         
         // Navigate back or to success screen
         if (mounted) {
-          Navigator.of(context).pop(true); // Pass success result
+          Navigator.of(context).pop(true);
         }
       } else {
-        final errorData = await response.stream.bytesToString();
-        throw Exception('Upload failed: ${response.statusCode} - $errorData');
+        // Try to parse error message
+        try {
+          final errorResponse = json.decode(responseString);
+          throw Exception('Upload failed: ${errorResponse['error'] ?? responseString}');
+        } catch (e) {
+          throw Exception('Upload failed: ${response.statusCode} - $responseString');
+        }
       }
     } catch (e) {
       print('Upload error: $e');
