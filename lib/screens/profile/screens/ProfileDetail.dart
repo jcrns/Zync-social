@@ -17,7 +17,7 @@ class ProfileDetailScreen extends StatefulWidget {
 }
 
 class _ProfileDetailScreenState extends State<ProfileDetailScreen> {
-  static const String _baseUrl = 'http://10.0.0.158:8000';
+  static const String _baseUrl = 'http://10.0.0.158:5000';
   Map<String, dynamic>? userProfile;
   List<dynamic> userPosts = [];
   bool isLoading = true;

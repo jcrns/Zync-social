@@ -21,7 +21,7 @@ class _SVEditProfileScreenState extends State<SVEditProfileScreen> {
   late TextEditingController _dobController;
   late TextEditingController _languageController;
   String? _profileImage;
-  static const String _baseUrl = 'http://10.0.0.158:8000';
+  static const String _baseUrl = 'http://10.0.0.158:5000';
 
   @override
   void initState() {

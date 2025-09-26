@@ -6,7 +6,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 class SVProfileHeaderComponent extends StatelessWidget {
   final String? profileImage;
   const SVProfileHeaderComponent({Key? key, this.profileImage}) : super(key: key);
-  static const String _baseUrl = 'http://10.0.0.158:8000';
+  static const String _baseUrl = 'http://10.0.0.158:5000';
 
   @override
   Widget build(BuildContext context) {

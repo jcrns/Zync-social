@@ -9,6 +9,7 @@ import 'package:bbdsocial/screens/addPost/components/PostDetailScreen.dart';
 import 'package:bbdsocial/utils/SVCommon.dart';
 import 'package:bbdsocial/utils/SVConstants.dart';
 import 'package:bbdsocial/utils/SVColors.dart';
+import 'package:bbdsocial/screens/addPost/components/PostInputWidget.dart';
 
 class SVSocialFragment extends StatefulWidget {
   const SVSocialFragment({Key? key}) : super(key: key);
@@ -94,7 +95,7 @@ class _SVSocialFragmentState extends State<SVSocialFragment> {
           'Accept': 'application/json',
           'X-Client-Version': '1.0.0',
           'X-Client-Platform': 'flutter-ios',
-          'Authorization': 'Token $token'
+          'Authorization': 'Bearer $token'
         },
       );
       if (response.statusCode == 200) {
@@ -139,6 +140,28 @@ class _SVSocialFragmentState extends State<SVSocialFragment> {
           _replyingToUsername = '';
         });
         fetchPosts();
+        print("response.body");
+        print(response.body);
+
+        final responseData = json.decode(response.body);
+        final post = responseData;
+        // _posts.insert(0, responseData);
+
+        print("Opening newly created post detail view.");
+
+        // final post = _posts[_posts.length - 1];
+        print('New post: $post');
+        
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => SVPostDetailScreen(
+              post: post,
+              token: token,
+              url: url,
+            ),
+          ),
+        );
       }
     } catch (e) {
       print('Error creating post: $e');
@@ -265,12 +288,13 @@ Widget _buildMedia(List<dynamic> media) {
             IconButton(
               icon: Icon(Icons.reply, size: 16.0),
               onPressed: () {
-                setState(() {
-                  _replyingToPostId = postId;
-                  _replyingToUsername = comment['user']['username'];
-                  _postController.text = '@$_replyingToUsername ';
-                  _postFocusNode.requestFocus();
-                });
+                // setState(() {
+                //   _replyingToPostId = postId;
+                //   _replyingToUsername = comment['user']['username'];
+                //   _postController.text = '@$_replyingToUsername ';
+                //   _postFocusNode.requestFocus();
+                // });
+                
               },
             ),
           ],
@@ -525,33 +549,6 @@ Widget _buildMedia(List<dynamic> media) {
             constraints: BoxConstraints(minHeight: availableHeight),
             child: Column(
               children: [
-                if (_replyingToPostId != null)
-                  Container(
-                    padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                    color: SVAppColorPrimary.withOpacity(0.1),
-                    child: Row(
-                      children: [
-                        Text(
-                          "Replying to @$_replyingToUsername",
-                          style: TextStyle(
-                            fontStyle: FontStyle.italic,
-                            color: SVAppColorPrimary,
-                          ),
-                        ),
-                        Spacer(),
-                        TextButton(
-                          onPressed: () {
-                            setState(() {
-                              _replyingToPostId = null;
-                              _replyingToUsername = '';
-                              _postController.clear();
-                            });
-                          },
-                          child: Text('Cancel', style: secondaryTextStyle(color: SVAppColorPrimary)),
-                        ),
-                      ],
-                    ),
-                  ),
                 Expanded(
                   child: _isLoading
                       ? Center(child: CircularProgressIndicator())
@@ -564,56 +561,31 @@ Widget _buildMedia(List<dynamic> media) {
                           ),
                         ),
                 ),
-                Container(
-                  padding: EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: context.cardColor,
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.grey.withOpacity(0.1),
-                        spreadRadius: 2,
-                        blurRadius: 5,
-                        offset: Offset(0, -2),
-                      ),
-                    ],
-                  ),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: AppTextField(
-                          controller: _postController,
-                          focus: _postFocusNode,
-                          textFieldType: TextFieldType.MULTILINE,
-                          decoration: InputDecoration(
-                            hintText: _replyingToPostId != null 
-                              ? "Replying to @$_replyingToUsername" 
-                              : "What's on your mind?",
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(SVAppCommonRadius),
-                            ),
-                            contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                          ),
-                          minLines: 1,
-                          maxLines: 3,
-                        ),
-                      ),
-                      8.width,
-                      Container(
-                        decoration: BoxDecoration(
-                          color: SVAppColorPrimary,
-                          borderRadius: radius(SVAppCommonRadius),
-                        ),
-                        child: IconButton(
-                          icon: Icon(Icons.send, color: Colors.white),
-                          onPressed: () => createPost(
-                            _postController.text, 
-                            parentId: _replyingToPostId
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
+                
+                // Use the new component
+                SVPostInputWidget(
+                  replyingToUsername: _replyingToUsername,
+                  replyingToPostId: _replyingToPostId,
+                  onCreatePost: createPost,
+                  onCancelReply: () {
+                    setState(() {
+                      _replyingToPostId = null;
+                      _replyingToUsername = '';
+                    });
+                  },
+                  showOptions: isKeyboardVisible,
                 ),
+
+                // SVAdvancedPostInputWidget(
+                //   replyingToUsername: _replyingToUsername,
+                //   replyingToPostId: _replyingToPostId,
+                //   onCreatePost: createPost,
+                //   onCancelReply: cancelReply,
+                //   mentionSuggestions: _userSuggestions,
+                //   onMentionQuery: (query) => searchUsers(query),
+                // )
+
+                
                 // Only show SVPostOptionsComponent when keyboard is visible
                 if (isKeyboardVisible) SVPostOptionsComponent(),
               ],
@@ -623,4 +595,23 @@ Widget _buildMedia(List<dynamic> media) {
       ),
     );
   }
+
+  // Update the reply button in _buildPostItem and _buildCommentItem:
+  // Change from:
+  // onPressed: () {
+  //   setState(() {
+  //     _replyingToPostId = post['id'];
+  //     _replyingToUsername = post['user']['username'];
+  //     _postController.text = '@${_replyingToUsername} ';
+  //     _postFocusNode.requestFocus();
+  //   });
+  // }
+  
+  // To:
+  // onPressed: () {
+  //   setState(() {
+  //     _replyingToPostId = post['id'];
+  //     _replyingToUsername = post['user']['username'];
+  //   });
+  // }
 }

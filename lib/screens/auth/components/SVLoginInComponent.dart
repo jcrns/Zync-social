@@ -57,7 +57,7 @@ class _SVLoginInComponentState extends State<SVLoginInComponent> {
     String username = emailController.text.toLowerCase();
     String password = passwordController.text;
 
-    var url = Uri.parse('http://10.0.0.158:8000/api/auth/login/');
+    var url = Uri.parse('http://10.0.0.158:5000/api/auth/login/');
 
     try {
       var response = await http.post(

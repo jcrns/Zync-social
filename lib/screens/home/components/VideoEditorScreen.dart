@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:bbdsocial/services/UserService.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
@@ -140,11 +141,9 @@ class _SVVideoEditorScreenState extends State<SVVideoEditorScreen> {
       if (isPlaying != _isPlaying) {
         setState(() {
           _isPlaying = isPlaying;
-          // Show play button when video is paused, hide when playing (with delay)
           if (!isPlaying) {
             _showPlayButton = true;
           } else {
-            // Hide play button after a short delay when video starts playing
             Future.delayed(Duration(milliseconds: 500), () {
               if (mounted && _isPlaying) {
                 setState(() {
@@ -156,7 +155,7 @@ class _SVVideoEditorScreenState extends State<SVVideoEditorScreen> {
         });
       }
 
-      // Handle trim playback - restart at start position when reaching end during trim mode
+      // Handle trim playback
       if (_isTrimming && _trimData != null && isPlaying) {
         final currentPosition = _controller.value.position.inMilliseconds;
         if (currentPosition >= _trimData!.endValueMs) {
@@ -185,7 +184,6 @@ class _SVVideoEditorScreenState extends State<SVVideoEditorScreen> {
         _controller.play();
         _showPlayButton = false;
         
-        // Auto-hide play button after 2 seconds
         Future.delayed(Duration(seconds: 2), () {
           if (mounted && _controller.value.isPlaying) {
             setState(() {
@@ -197,12 +195,7 @@ class _SVVideoEditorScreenState extends State<SVVideoEditorScreen> {
     });
   }
 
-  // Method to get authentication token
-  Future<String?> _getAuthToken() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getString('auth_token');
-  }
-
+  // Simplified upload method using UserService
   Future<void> _uploadVideo() async {
     if (_isUploading) return;
 
@@ -223,45 +216,14 @@ class _SVVideoEditorScreenState extends State<SVVideoEditorScreen> {
         throw Exception('Video file not found at path: $videoPath');
       }
 
-      String? token = await _getAuthToken();
-      if (token == null) {
-        throw Exception('Please login to upload video');
-      }
-
-      var request = http.MultipartRequest(
-        'POST',
-        Uri.parse('http://10.0.0.158:8000/api/videos/upload/'),
-      );
-
-      request.headers['Authorization'] = 'Bearer $token';
-      request.headers['Accept'] = 'application/json';
-
-      request.files.add(await http.MultipartFile.fromPath(
-        'video',
-        videoPath,
-        filename: 'edited_video_${DateTime.now().millisecondsSinceEpoch}.mp4',
-      ));
-
-      request.fields['title'] = 'Edited Video ${DateTime.now().toString()}';
-      request.fields['description'] = 'Video edited in BBDSocial app';
-
-      final response = await request.send();
-      final responseString = await response.stream.bytesToString();
+      // Use UserService for API call
+      final result = await UserService.uploadVideo(videoFile);
+      print("result: $result");
       
-      if (response.statusCode == 201) {
-        final jsonResponse = json.decode(responseString);
-        toast('Video uploaded successfully!');
-        
-        if (mounted) {
-          Navigator.of(context).pop(true);
-        }
-      } else {
-        try {
-          final errorResponse = json.decode(responseString);
-          throw Exception('Upload failed: ${errorResponse['error'] ?? responseString}');
-        } catch (e) {
-          throw Exception('Upload failed: ${response.statusCode} - $responseString');
-        }
+      toast('Video uploaded successfully!');
+      
+      if (mounted) {
+        Navigator.of(context).pop(true);
       }
     } catch (e) {
       print('Upload error: $e');
@@ -331,7 +293,6 @@ class _SVVideoEditorScreenState extends State<SVVideoEditorScreen> {
       final tempDir = await getTemporaryDirectory();
       final outPath = '${tempDir.path}/trimmed_${DateTime.now().millisecondsSinceEpoch}.mp4';
 
-      // Calculate start and duration in seconds
       final startSeconds = _trimData!.startValueMs / 1000;
       final durationSeconds = (_trimData!.endValueMs - _trimData!.startValueMs) / 1000;
 
@@ -348,7 +309,6 @@ class _SVVideoEditorScreenState extends State<SVVideoEditorScreen> {
             ..initialize().then((_) {
               setState(() {
                 _isProcessingTrim = false;
-                // Update trim data to reflect new video duration
                 _trimData = TrimData(
                   startValueMs: 0,
                   endValueMs: _controller.value.duration.inMilliseconds,
@@ -375,7 +335,6 @@ class _SVVideoEditorScreenState extends State<SVVideoEditorScreen> {
   void _resetTrim() {
     setState(() {
       _isTrimming = false;
-      // Reset trim data to original video duration
       if (_controller.value.isInitialized) {
         _trimData = TrimData(
           startValueMs: 0,
@@ -387,6 +346,8 @@ class _SVVideoEditorScreenState extends State<SVVideoEditorScreen> {
     });
   }
 
+  // ... (Keep all your existing helper methods: _onAddText, _buildColorSelector, etc.)
+  // These remain the same as in your original code
   void _onAddText() {
     String newText = 'Your Text Here';
     

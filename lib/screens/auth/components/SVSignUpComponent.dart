@@ -33,7 +33,7 @@ class _SVSignUpComponentState extends State<SVSignUpComponent> {
     String username = usernameController.text.toLowerCase();
     String password = passwordController.text;
 
-    var url = Uri.parse('http://10.0.0.158:8000/api-signup/');
+    var url = Uri.parse('http://10.0.0.158:5000/api-signup/');
 
     try {
       var response = await http.post(
@@ -83,7 +83,7 @@ class _SVSignUpComponentState extends State<SVSignUpComponent> {
       return;
     }
 
-    var url = Uri.parse('http://10.0.0.158:8000/api-signup/');
+    var url = Uri.parse('http://10.0.0.158:5000/api-signup/');
 
     try {
       var response = await http.post(

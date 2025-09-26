@@ -3,7 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:nb_utils/nb_utils.dart';
 import 'package:bbdsocial/screens/home/components/SVHomeDrawerComponent.dart';
-import 'package:bbdsocial/screens/home/components/SVPostComponent.dart';
+import 'package:bbdsocial/screens/fragments/SocialFragment.dart';
 import 'package:bbdsocial/screens/home/components/SVStoryComponent.dart';
 import 'package:bbdsocial/utils/SVCommon.dart';
 

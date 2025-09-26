@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:bbdsocial/services/UserService.dart';
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
 import 'package:http/http.dart' as http;
@@ -78,6 +79,7 @@ class _SVForumScreenState extends State<SVForumScreen> {
     return prefs.getString('auth_token');
   }
 
+  // In SVForumScreen.dart - Update the API calls to use UserService
   Future<void> _loadVideos() async {
     if (_isLoading || !_hasMore) return;
 
@@ -86,70 +88,64 @@ class _SVForumScreenState extends State<SVForumScreen> {
     });
 
     try {
-      final token = await _getAuthToken();
+      // Use UserService instead of direct HTTP calls
+      final videosData = await UserService.getVideos(page: _page);
       
-      // Add timeout to the request
-      final response = await http.get(
-        Uri.parse('http://10.0.0.158:8000/api/videos/?page=$_page'),
-        headers: {
-          if (token != null) 'Authorization': 'Bearer $token',
-        },
-      ).timeout(Duration(seconds: 30));
+      final List<VideoPost> newVideos = videosData
+          .map((videoJson) {
+            try {
+              return VideoPost.fromJson(videoJson);
+            } catch (e) {
+              print('Error parsing video: $e');
+              return null;
+            }
+          })
+          .where((video) => video != null)
+          .cast<VideoPost>()
+          .toList();
 
-      if (response.statusCode == 200) {
-        final data = json.decode(response.body);
-        print('Loaded ${data['results']?.length ?? 0} videos'); // Debug
-        
-        final List<VideoPost> newVideos = (data['results'] as List)
-            .map((videoJson) {
-              try {
-                return VideoPost.fromJson(videoJson);
-              } catch (e) {
-                print('Error parsing video: $e');
-                return null;
-              }
-            })
-            .where((video) => video != null)
-            .cast<VideoPost>()
-            .toList();
-
-        // Debug: Print video URLs
-        for (var video in newVideos) {
-          print('Video ${video.id}: ${video.videoUrl}');
-        }
-
-        // Validate URLs and only keep reachable videos
-        final List<VideoPost> reachableVideos = [];
-        for (var video in newVideos) {
-          if (video.videoUrl == null || video.videoUrl.isEmpty) {
-            print('Skipping video ${video.id}: empty URL');
-            continue;
-          }
-          final ok = await _testVideoUrl(video.videoUrl);
-          if (ok) {
-            reachableVideos.add(video);
-          } else {
-            print('Skipping unreachable video ${video.id}: ${video.videoUrl}');
-          }
-        }
-
-        setState(() {
-          _videos.addAll(reachableVideos);
-          _isLoading = false;
-          _page++;
-          _hasMore = data['next'] != null;
-        });
-      } else {
-        throw Exception('Failed to load videos: ${response.statusCode}');
-      }
+      setState(() {
+        _videos.addAll(newVideos);
+        _isLoading = false;
+        _page++;
+        _hasMore = videosData.length == 10; // Assuming 10 per page
+      });
     } catch (e) {
       setState(() {
         _isLoading = false;
       });
-      print('Video load error: $e');
       toast('Error loading videos: $e');
     }
   }
+
+  Future<void> _likeVideo(int videoId) async {
+    try {
+      await UserService.likeVideo(videoId);
+      
+      setState(() {
+        final videoIndex = _videos.indexWhere((v) => v.id == videoId);
+        if (videoIndex != -1) {
+          final video = _videos[videoIndex];
+          _videos[videoIndex] = VideoPost(
+            id: video.id,
+            title: video.title,
+            description: video.description,
+            videoUrl: video.videoUrl,
+            userUsername: video.userUsername,
+            likesCount: video.isLiked ? video.likesCount - 1 : video.likesCount + 1,
+            commentsCount: video.commentsCount,
+            isLiked: !video.isLiked,
+            isBookmarked: video.isBookmarked,
+            thumbnailUrl: video.thumbnailUrl,
+          );
+        }
+      });
+    } catch (e) {
+      toast('Error liking video: $e');
+    }
+  }
+
+// Similarly update _bookmarkVideo, _loadComments, _sendComment to use UserService
 
   Future<void> _loadComments(int videoId) async {
     setState(() {
@@ -160,7 +156,7 @@ class _SVForumScreenState extends State<SVForumScreen> {
     try {
       final token = await _getAuthToken();
       final response = await http.get(
-        Uri.parse('http://10.0.0.158:8000/api/videos/$videoId/comments/'),
+        Uri.parse('http://10.0.0.158:5000/api/videos/$videoId/comments/'),
         headers: {
           if (token != null) 'Authorization': 'Bearer $token',
         },
@@ -187,46 +183,6 @@ class _SVForumScreenState extends State<SVForumScreen> {
     }
   }
 
-  Future<void> _likeVideo(int videoId) async {
-    try {
-      final token = await _getAuthToken();
-      if (token == null) {
-        toast('Please login to like videos');
-        return;
-      }
-
-      final response = await http.post(
-        Uri.parse('http://10.0.0.158:8000/api/videos/$videoId/like/'),
-        headers: {
-          'Authorization': 'Bearer $token',
-        },
-      );
-
-      if (response.statusCode == 200) {
-        setState(() {
-          final videoIndex = _videos.indexWhere((v) => v.id == videoId);
-          if (videoIndex != -1) {
-            final video = _videos[videoIndex];
-            _videos[videoIndex] = VideoPost(
-              id: video.id,
-              title: video.title,
-              description: video.description,
-              videoUrl: video.videoUrl,
-              userUsername: video.userUsername,
-              likesCount: video.isLiked ? video.likesCount - 1 : video.likesCount + 1,
-              commentsCount: video.commentsCount,
-              isLiked: !video.isLiked,
-              isBookmarked: video.isBookmarked,
-              thumbnailUrl: video.thumbnailUrl,
-            );
-          }
-        });
-      }
-    } catch (e) {
-      toast('Error liking video: $e');
-    }
-  }
-
   Future<void> _bookmarkVideo(int videoId) async {
     try {
       final token = await _getAuthToken();
@@ -236,7 +192,7 @@ class _SVForumScreenState extends State<SVForumScreen> {
       }
 
       final response = await http.post(
-        Uri.parse('http://10.0.0.158:8000/api/videos/$videoId/bookmark/'),
+        Uri.parse('http://10.0.0.158:5000/api/videos/$videoId/bookmark/'),
         headers: {
           'Authorization': 'Bearer $token',
         },
@@ -294,7 +250,7 @@ class _SVForumScreenState extends State<SVForumScreen> {
       }
 
       final response = await http.post(
-        Uri.parse('http://10.0.0.158:8000/api/videos/$videoId/comments/'),
+        Uri.parse('http://10.0.0.158:5000/api/videos/$videoId/comments/'),
         headers: {
           'Authorization': 'Bearer $token',
           'Content-Type': 'application/json',

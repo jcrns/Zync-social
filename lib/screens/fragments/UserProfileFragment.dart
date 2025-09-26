@@ -19,7 +19,7 @@ class SVProfileFragment extends StatefulWidget {
 }
 
 class _SVProfileFragmentState extends State<SVProfileFragment> {
-  static const String _baseUrl = 'http://10.0.0.158:8000';
+  static const String _baseUrl = 'http://10.0.0.158:5000';
   Map<String, dynamic>? userProfile;
   Map<String, int>? coinBalances;
   bool isLoading = true;
