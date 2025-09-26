@@ -1,3 +1,6 @@
+// In your VideoModel.dart file, add this to the VideoPost class
+import 'CommentModel.dart'; // Add this import
+
 class VideoPost {
   final int id;
   final String title;
@@ -23,40 +26,46 @@ class VideoPost {
     required this.thumbnailUrl,
   });
 
+  // Add copyWith method
+  VideoPost copyWith({
+    int? id,
+    String? title,
+    String? description,
+    String? videoUrl,
+    String? userUsername,
+    int? likesCount,
+    int? commentsCount,
+    bool? isLiked,
+    bool? isBookmarked,
+    String? thumbnailUrl,
+  }) {
+    return VideoPost(
+      id: id ?? this.id,
+      title: title ?? this.title,
+      description: description ?? this.description,
+      videoUrl: videoUrl ?? this.videoUrl,
+      userUsername: userUsername ?? this.userUsername,
+      likesCount: likesCount ?? this.likesCount,
+      commentsCount: commentsCount ?? this.commentsCount,
+      isLiked: isLiked ?? this.isLiked,
+      isBookmarked: isBookmarked ?? this.isBookmarked,
+      thumbnailUrl: thumbnailUrl ?? this.thumbnailUrl,
+    );
+  }
+
+  // Your existing fromJson method...
   factory VideoPost.fromJson(Map<String, dynamic> json) {
     return VideoPost(
-      id: json['id'],
-      title: json['title'] ?? 'Untitled',
+      id: json['id'] ?? 0,
+      title: json['title'] ?? '',
       description: json['description'] ?? '',
       videoUrl: json['video_url'] ?? '',
-      userUsername: json['user_username'] ?? 'Unknown',
+      userUsername: json['user_username'] ?? '',
       likesCount: json['likes_count'] ?? 0,
       commentsCount: json['comments_count'] ?? 0,
       isLiked: json['is_liked'] ?? false,
       isBookmarked: json['is_bookmarked'] ?? false,
       thumbnailUrl: json['thumbnail_url'] ?? '',
-    );
-  }
-}
-class Comment {
-  final int id;
-  final String userUsername;
-  final String text;
-  final String createdAt;
-
-  Comment({
-    required this.id,
-    required this.userUsername,
-    required this.text,
-    required this.createdAt,
-  });
-
-  factory Comment.fromJson(Map<String, dynamic> json) {
-    return Comment(
-      id: json['id'],
-      userUsername: json['user_username'] ?? 'Unknown',
-      text: json['text'] ?? '',
-      createdAt: json['created_at'] ?? '',
     );
   }
 }

@@ -9,7 +9,7 @@ import 'package:bbdsocial/utils/SVCommon.dart';
 import 'package:bbdsocial/utils/SVConstants.dart';
 import 'package:bbdsocial/utils/SVColors.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
-import 'package:web_socket_channel/io.dart'; // Or platform-specific import
+import 'package:web_socket_channel/io.dart';
 
 class SVPostDetailScreen extends StatefulWidget {
   final dynamic post;
@@ -41,8 +41,6 @@ class _SVPostDetailScreenState extends State<SVPostDetailScreen> {
   final ScrollController _scrollController = ScrollController();
   bool _isRefreshing = false;
 
-  
-  // Add a WebSocketChannel variable
   WebSocketChannel? _channel;
 
   @override
@@ -50,49 +48,34 @@ class _SVPostDetailScreenState extends State<SVPostDetailScreen> {
     super.initState();
     _post = widget.post;
     _fetchPostDetails();
-    _connectToWebSocket(); // Connect when the screen loads
+    _connectToWebSocket();
   }
 
   void _connectToWebSocket() {
-    // Ensure you have a post ID to connect
     if (_post == null || _post['id'] == null) return;
     
-    // Replace 'your-django-domain.com' with your actual domain or IP
-    // Use 'ws://' for development and 'wss://' for production (secure)
-    // const String domain = '10.0.0.158:8000';
-    // final wsUrl = Uri.parse('ws://$domain/ws/post/${_post['id']}/');
-    final wsUrl = Uri.parse('ws://10.0.0.158:8000/ws/post/${_post['id']}/'); // Ensure the endpoint matches the server's WebSocket configuration
-
+    final wsUrl = Uri.parse('ws://10.0.0.158:8000/ws/post/${_post['id']}/');
     _channel = IOWebSocketChannel.connect(wsUrl);
 
-    // Listen for incoming messages from the server
     _channel!.stream.listen((message) {
       final decodedMessage = json.decode(message);
       final eventType = decodedMessage['type'];
       final data = decodedMessage['data'];
 
-      // Update the UI based on the event type
-      if (mounted) { // Check if the widget is still in the tree
+      if (mounted) {
         setState(() {
           if (eventType == 'new_reply') {
-            // Add the new reply to the beginning of the child_posts list
             if (_post['child_posts'] == null) {
               _post['child_posts'] = [];
             }
-            // Avoid adding duplicates if the poster is the current user
             if (!_post['child_posts'].any((p) => p['id'] == data['id'])) {
                 _post['child_posts'].insert(0, data);
             }
           }
-          // You can add more event types here, e.g., 'like_update'
-          // else if (eventType == 'like_update') {
-          //   _post['likesCount'] = data['likes_count'];
-          // }
         });
       }
     }, onError: (error) {
       print('WebSocket Error: $error');
-      // Optionally, implement reconnection logic here
     }, onDone: () {
       print('WebSocket connection closed');
     });
@@ -103,10 +86,9 @@ class _SVPostDetailScreenState extends State<SVPostDetailScreen> {
     _postController.dispose();
     _postFocusNode.dispose();
     _scrollController.dispose();
-    _channel?.sink.close(); // IMPORTANT: Close the connection
+    _channel?.sink.close();
     super.dispose();
   }
-
 
   Future<void> _fetchPostDetails() async {
     try {
@@ -283,7 +265,7 @@ class _SVPostDetailScreenState extends State<SVPostDetailScreen> {
   }
 
   Widget _buildPostItem(dynamic post, {bool isChild = false, int depth = 0}) {
-    // Main post is always expanded, child posts start collapsed
+    // All posts can be toggled, main post starts expanded
     final bool isExpanded = _expandedPosts[post['id']] ?? (post['id'] == _post['id']);
     final childPosts = post['child_posts'] ?? [];
     final comments = post['comments'] ?? [];
@@ -340,42 +322,84 @@ class _SVPostDetailScreenState extends State<SVPostDetailScreen> {
               _buildMedia(post['media']),
               SizedBox(height: 12.0),
               
-              // Action buttons
-              Row(
-                children: [
-                  IconButton(
-                    icon: Image.asset('images/socialv/icons/ic_Heart.png', height: 22, width: 22, color: context.iconColor),
-                    onPressed: () => _likePost(post['id']),
-                  ),
-                  Text('${post['likesCount']}', style: TextStyle(fontSize: 12.0)),
-                  SizedBox(width: 16.0),
-                  IconButton(
-                    icon: Image.asset('images/socialv/icons/ic_Chat.png', height: 22, width: 22, color: context.iconColor),
-                    onPressed: () async {
-                      await _fetchChildPosts(post['id']);
-                      setState(() => _expandedPosts[post['id']] = !isExpanded);
-                    },
-                  ),
-                  Text('$totalReplies', style: TextStyle(fontSize: 12.0)),
-                  SizedBox(width: 16.0),
-                  IconButton(
-                    icon: Image.asset('images/socialv/icons/ic_Send.png', height: 22, width: 22, color: context.iconColor),
-                    onPressed: () => setState(() {
-                      _replyingToPostId = post['id'];
-                      _replyingToUsername = post['user']['username'];
-                    }),
-                  ),
-                  Spacer(),
-                  if (totalReplies > 0 && !isMainPost) // Only show toggle for child posts
-                    TextButton(
-                      onPressed: () => setState(() => _expandedPosts[post['id']] = !isExpanded),
-                      child: Text(isExpanded ? 'Hide Replies' : 'Show Replies', style: TextStyle(fontSize: 11.0)),
+              // Action buttons - FIXED OVERFLOW LAYOUT
+              Container(
+                constraints: BoxConstraints(minHeight: 40),
+                child: Row(
+                  children: [
+                    // Left side: Action buttons
+                    Expanded(
+                      child: Wrap(
+                        spacing: 4.0,
+                        runSpacing: 4.0,
+                        children: [
+                          // Like button
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              IconButton(
+                                padding: EdgeInsets.zero,
+                                constraints: BoxConstraints(minWidth: 36, minHeight: 36),
+                                icon: Image.asset('images/socialv/icons/ic_Heart.png', height: 20, width: 20, color: context.iconColor),
+                                onPressed: () => _likePost(post['id']),
+                              ),
+                              Text('${post['likesCount']}', style: TextStyle(fontSize: 12.0)),
+                            ],
+                          ),
+                          
+                          // Comment button
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              IconButton(
+                                padding: EdgeInsets.zero,
+                                constraints: BoxConstraints(minWidth: 36, minHeight: 36),
+                                icon: Image.asset('images/socialv/icons/ic_Chat.png', height: 20, width: 20, color: context.iconColor),
+                                onPressed: () async {
+                                  await _fetchChildPosts(post['id']);
+                                  setState(() => _expandedPosts[post['id']] = !isExpanded);
+                                },
+                              ),
+                              Text('$totalReplies', style: TextStyle(fontSize: 12.0)),
+                            ],
+                          ),
+                          
+                          // Share/Reply button
+                          IconButton(
+                            padding: EdgeInsets.zero,
+                            constraints: BoxConstraints(minWidth: 36, minHeight: 36),
+                            icon: Image.asset('images/socialv/icons/ic_Send.png', height: 20, width: 20, color: context.iconColor),
+                            onPressed: () => setState(() {
+                              _replyingToPostId = post['id'];
+                              _replyingToUsername = post['user']['username'];
+                            }),
+                          ),
+                        ],
+                      ),
                     ),
-                ],
+                    
+                    // Right side: Show/Hide button for ALL posts with replies
+                    if (totalReplies > 0)
+                      Container(
+                        margin: EdgeInsets.only(left: 8),
+                        child: TextButton(
+                          style: TextButton.styleFrom(
+                            padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                            minimumSize: Size(0, 30),
+                          ),
+                          onPressed: () => setState(() => _expandedPosts[post['id']] = !isExpanded),
+                          child: Text(
+                            isExpanded ? 'Hide Replies' : 'Show Replies', 
+                            style: TextStyle(fontSize: 11.0),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
               ),
               
-              // Replies section - always shown for main post, conditionally for child posts
-              if (totalReplies > 0 && (isMainPost || isExpanded)) ...[
+              // Replies section - shown when expanded
+              if (totalReplies > 0 && isExpanded) ...[
                 Divider(thickness: 1.0),
                 Padding(
                   padding: EdgeInsets.symmetric(vertical: 8.0),
@@ -391,7 +415,7 @@ class _SVPostDetailScreenState extends State<SVPostDetailScreen> {
     );
   }
 
- Future<void> createPost(String content, {int? parentId}) async {
+  Future<void> createPost(String content, {int? parentId}) async {
     if (content.trim().isEmpty) return;
     
     try {
@@ -416,9 +440,6 @@ class _SVPostDetailScreenState extends State<SVPostDetailScreen> {
           _replyingToUsername = '';
           _postController.clear();
         });
-        // NO NEED to call _fetchPostDetails() here anymore.
-        // The WebSocket will handle the UI update for all clients,
-        // including the one who just posted.
         toast('Posted successfully');
       } else {
         toast('Failed to create post: ${response.statusCode}');
@@ -479,7 +500,7 @@ class _SVPostDetailScreenState extends State<SVPostDetailScreen> {
           setState(() {
             parentPost['child_posts'] = childPosts;
             _post = parentPost;
-            _expandedPosts[_post['id']] = true; // Keep main post expanded
+            _expandedPosts[_post['id']] = true;
           });
         }
       }

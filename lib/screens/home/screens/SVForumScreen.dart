@@ -9,6 +9,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:nb_utils/nb_utils.dart';
 import 'package:bbdsocial/utils/SVColors.dart';
 import 'package:bbdsocial/models/VideoModel.dart';
+import 'package:bbdsocial/models/CommentModel.dart';
+import 'package:web_socket_channel/io.dart';
 
 class SVForumScreen extends StatefulWidget {
   const SVForumScreen({Key? key}) : super(key: key);
@@ -29,6 +31,25 @@ class _SVForumScreenState extends State<SVForumScreen> {
   List<Comment> _comments = [];
   bool _isLoadingComments = false;
   int? _currentVideoId;
+
+  // Handle incoming realtime comment updates
+// In _SVForumScreenState, replace the _handleNewComment method
+  void _handleNewComment(int videoId, Comment comment) {
+    setState(() {
+      // Update comments list if comments sheet is open for this video
+      if (_currentVideoId == videoId) {
+        _comments.insert(0, comment);
+      }
+
+      // Update video comments count using copyWith
+      final videoIndex = _videos.indexWhere((v) => v.id == videoId);
+      if (videoIndex != -1) {
+        _videos[videoIndex] = _videos[videoIndex].copyWith(
+          commentsCount: _videos[videoIndex].commentsCount + 1,
+        );
+      }
+    });
+  }
 
   @override
   void initState() {
@@ -126,17 +147,9 @@ class _SVForumScreenState extends State<SVForumScreen> {
         final videoIndex = _videos.indexWhere((v) => v.id == videoId);
         if (videoIndex != -1) {
           final video = _videos[videoIndex];
-          _videos[videoIndex] = VideoPost(
-            id: video.id,
-            title: video.title,
-            description: video.description,
-            videoUrl: video.videoUrl,
-            userUsername: video.userUsername,
+          _videos[videoIndex] = video.copyWith(
             likesCount: video.isLiked ? video.likesCount - 1 : video.likesCount + 1,
-            commentsCount: video.commentsCount,
             isLiked: !video.isLiked,
-            isBookmarked: video.isBookmarked,
-            thumbnailUrl: video.thumbnailUrl,
           );
         }
       });
@@ -236,6 +249,7 @@ class _SVForumScreenState extends State<SVForumScreen> {
         onSendComment: (text) {
           // Implement comment sending
           _sendComment(videoId, text);
+          // _sendCommentViaWebSocket(text);
         },
       ),
     );
@@ -289,6 +303,14 @@ class _SVForumScreenState extends State<SVForumScreen> {
                   onLike: () => _likeVideo(video.id),
                   onBookmark: () => _bookmarkVideo(video.id),
                   onComment: () => _showCommentsSheet(video.id),
+                  onNewComment: (comment) => _handleNewComment(video.id, comment),
+                  onCommentAdded: () => _loadComments(video.id),
+                  onVideoUpdated: (updated) {
+                    setState(() {
+                      final i = _videos.indexWhere((v) => v.id == updated.id);
+                      if (i != -1) _videos[i] = updated;
+                    });
+                  },
                 );
               },
             ),
@@ -302,6 +324,9 @@ class VideoPostItem extends StatefulWidget {
   final VoidCallback onLike;
   final VoidCallback onBookmark;
   final VoidCallback onComment;
+  final Function(Comment)? onNewComment;
+  final VoidCallback? onCommentAdded;
+  final Function(VideoPost)? onVideoUpdated;
 
   const VideoPostItem({
     Key? key,
@@ -310,6 +335,9 @@ class VideoPostItem extends StatefulWidget {
     required this.onLike,
     required this.onBookmark,
     required this.onComment,
+    this.onNewComment,
+    this.onCommentAdded,
+    this.onVideoUpdated,
   }) : super(key: key);
 
   @override
@@ -321,128 +349,131 @@ class _VideoPostItemState extends State<VideoPostItem> {
   bool _isVideoInitialized = false;
   bool _isLoadingVideo = false;
   String? _videoError;
+  IOWebSocketChannel? _videoChannel;
+
 
   @override
   void initState() {
     super.initState();
     _initializeVideo();
+    _connectToVideoWebSocket();
   }
 
-Future<void> _initializeVideo() async {
-  if (widget.video.videoUrl.isEmpty) {
-    setState(() {
-      _videoError = 'Video URL is empty';
-    });
-    return;
-  }
-
-  setState(() {
-    _isLoadingVideo = true;
-    _videoError = null;
-  });
-
-  try {
-    // Test the URL first
-    final response = await http.head(Uri.parse(widget.video.videoUrl));
-    if (response.statusCode != 200) {
-      throw Exception('Video URL returned status ${response.statusCode}');
+  Future<void> _initializeVideo() async {
+    if (widget.video.videoUrl.isEmpty) {
+      setState(() {
+        _videoError = 'Video URL is empty';
+      });
+      return;
     }
 
-    // Create controller with explicit format hint
-    _controller = VideoPlayerController.network(
-      widget.video.videoUrl,
-      // Removed formatHint as it is not required
-      videoPlayerOptions: VideoPlayerOptions(
-        allowBackgroundPlayback: false,
-        mixWithOthers: false,
-      ),
-    );
+    setState(() {
+      _isLoadingVideo = true;
+      _videoError = null;
+    });
 
-    // Set up error handling
-    _controller.addListener(() {
-      if (_controller.value.hasError && mounted) {
+    try {
+      // Test the URL first
+      final response = await http.head(Uri.parse(widget.video.videoUrl));
+      if (response.statusCode != 200) {
+        throw Exception('Video URL returned status ${response.statusCode}');
+      }
+
+      // Create controller with explicit format hint
+      _controller = VideoPlayerController.network(
+        widget.video.videoUrl,
+        // Removed formatHint as it is not required
+        videoPlayerOptions: VideoPlayerOptions(
+          allowBackgroundPlayback: false,
+          mixWithOthers: false,
+        ),
+      );
+
+      // Set up error handling
+      _controller.addListener(() {
+        if (_controller.value.hasError && mounted) {
+          setState(() {
+            _videoError = _controller.value.errorDescription ?? 'Unknown video error';
+            _isLoadingVideo = false;
+          });
+        }
+      });
+
+      // Initialize with better error handling
+      await _controller.initialize().timeout(
+        Duration(seconds: 30),
+        onTimeout: () {
+          throw TimeoutException('Video initialization timed out after 30 seconds');
+        },
+      );
+
+      if (mounted) {
         setState(() {
-          _videoError = _controller.value.errorDescription ?? 'Unknown video error';
+          _isVideoInitialized = true;
+          _isLoadingVideo = false;
+        });
+        
+        // Auto-play if this is the current video
+        if (widget.isCurrent) {
+          await _controller.play();
+          _controller.setLooping(true);
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _videoError = 'Failed to load video: ${e.toString()}';
+          _isLoadingVideo = false;
+          _isVideoInitialized = false;
+        });
+      }
+      print('Video initialization error: $e');
+      
+      // Try alternative approach for problematic videos
+      if (e.toString().contains('byte range') || e.toString().contains('range')) {
+        await _tryAlternativeVideoLoad();
+      }
+    }
+  }
+
+  Future<void> _tryAlternativeVideoLoad() async {
+    // Try loading the video in a different way
+    try {
+      print('Trying alternative video loading method...');
+      
+      // Create a new controller with different options
+      _controller = VideoPlayerController.network(
+        widget.video.videoUrl,
+        // Don't use format hint this time
+        videoPlayerOptions: VideoPlayerOptions(
+          allowBackgroundPlayback: false,
+        ),
+      );
+      
+      await _controller.initialize().timeout(Duration(seconds: 20));
+      
+      if (mounted) {
+        setState(() {
+          _isVideoInitialized = true;
+          _isLoadingVideo = false;
+          _videoError = null;
+        });
+        
+        if (widget.isCurrent) {
+          await _controller.play();
+          _controller.setLooping(true);
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _videoError = 'Alternative load also failed: ${e.toString()}';
           _isLoadingVideo = false;
         });
       }
-    });
-
-    // Initialize with better error handling
-    await _controller.initialize().timeout(
-      Duration(seconds: 30),
-      onTimeout: () {
-        throw TimeoutException('Video initialization timed out after 30 seconds');
-      },
-    );
-
-    if (mounted) {
-      setState(() {
-        _isVideoInitialized = true;
-        _isLoadingVideo = false;
-      });
-      
-      // Auto-play if this is the current video
-      if (widget.isCurrent) {
-        await _controller.play();
-        _controller.setLooping(true);
-      }
-    }
-  } catch (e) {
-    if (mounted) {
-      setState(() {
-        _videoError = 'Failed to load video: ${e.toString()}';
-        _isLoadingVideo = false;
-        _isVideoInitialized = false;
-      });
-    }
-    print('Video initialization error: $e');
-    
-    // Try alternative approach for problematic videos
-    if (e.toString().contains('byte range') || e.toString().contains('range')) {
-      await _tryAlternativeVideoLoad();
+      print('Alternative video load error: $e');
     }
   }
-}
-
-Future<void> _tryAlternativeVideoLoad() async {
-  // Try loading the video in a different way
-  try {
-    print('Trying alternative video loading method...');
-    
-    // Create a new controller with different options
-    _controller = VideoPlayerController.network(
-      widget.video.videoUrl,
-      // Don't use format hint this time
-      videoPlayerOptions: VideoPlayerOptions(
-        allowBackgroundPlayback: false,
-      ),
-    );
-    
-    await _controller.initialize().timeout(Duration(seconds: 20));
-    
-    if (mounted) {
-      setState(() {
-        _isVideoInitialized = true;
-        _isLoadingVideo = false;
-        _videoError = null;
-      });
-      
-      if (widget.isCurrent) {
-        await _controller.play();
-        _controller.setLooping(true);
-      }
-    }
-  } catch (e) {
-    if (mounted) {
-      setState(() {
-        _videoError = 'Alternative load also failed: ${e.toString()}';
-        _isLoadingVideo = false;
-      });
-    }
-    print('Alternative video load error: $e');
-  }
-}
 
   @override
   void didUpdateWidget(covariant VideoPostItem oldWidget) {
@@ -469,6 +500,7 @@ Future<void> _tryAlternativeVideoLoad() async {
 
   @override
   void dispose() {
+    _videoChannel?.sink.close();
     _controller.dispose();
     super.dispose();
   }
@@ -485,6 +517,114 @@ Future<void> _tryAlternativeVideoLoad() async {
 
   void _retryVideoLoad() {
     _initializeVideo();
+  }
+
+
+  Future<String?> _getAuthToken() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString('auth_token');
+  }
+
+  void _connectToVideoWebSocket() async {
+
+    try {
+      final token = await _getAuthToken();
+      final tokenParam = token != null ? '?token=$token' : '';
+      final wsUrl = Uri.parse('ws://10.0.0.158:8000/ws/video/${widget.video.id}/$tokenParam');
+      
+      print('Connecting to WebSocket: ${wsUrl.toString()}');
+      
+      _videoChannel = IOWebSocketChannel.connect(wsUrl);
+
+      _videoChannel!.stream.listen((message) {
+        try {
+          final decodedMessage = json.decode(message);
+          final eventType = decodedMessage['type'];
+          final data = decodedMessage['data'];
+
+          if (!mounted) return;
+
+          print('WebSocket message received: $eventType');
+
+          if (eventType == 'like_update') {
+            final updated = widget.video.copyWith(
+              likesCount: data['likes_count'] ?? widget.video.likesCount,
+              isLiked: data['liked'] ?? widget.video.isLiked,
+            );
+            // notify parent to update shared list/state
+            widget.onVideoUpdated?.call(updated);
+          } else if (eventType == 'new_comment') {
+            if (widget.onNewComment != null) {
+              final newComment = Comment.fromJson(data);
+              widget.onNewComment!(newComment);
+            }
+          } else if (eventType == 'error') {
+            print('WebSocket error: ${data['error']}');
+            toast('WebSocket: ${data['error']}');
+          }
+        } catch (e) {
+          print('Error handling WS message: $e');
+        }
+      }, onError: (error) {
+        print('Video WebSocket Error: $error');
+      }, onDone: () {
+        print('Video WebSocket connection closed');
+      });
+    } catch (e) {
+      print('WebSocket connection error: $e');
+    }
+  }
+  
+  Future<void> _likeViaWebSocket() async {
+    try {
+      if (_videoChannel != null) {
+        _videoChannel!.sink.add(json.encode({
+          'type': 'like_video',
+          'video_id': widget.video.id,
+        }));
+      }
+      // Optimistic UI update via parent's onLike fallback
+      widget.onLike();
+    } catch (e) {
+      print('WebSocket like failed, fallback to HTTP: $e');
+      widget.onLike();
+    }
+  }
+
+  Future<void> _sendCommentViaWebSocket(String text) async {
+    try {
+      if (_videoChannel != null) {
+        _videoChannel!.sink.add(json.encode({
+          'type': 'new_comment',
+          'video_id': widget.video.id,
+          'text': text,
+        }));
+        // notify parent to reload comments if it wants to
+        widget.onCommentAdded?.call();
+      } else {
+        // fallback to HTTP if no socket
+        final token = await _getAuthToken();
+        if (token == null) {
+          toast('Please login to comment');
+          return;
+        }
+        final response = await http.post(
+          Uri.parse('http://10.0.0.158:5000/api/videos/${widget.video.id}/comments/'),
+          headers: {
+            'Authorization': 'Bearer $token',
+            'Content-Type': 'application/json',
+          },
+          body: json.encode({'text': text}),
+        );
+        if (response.statusCode == 201) {
+          widget.onCommentAdded?.call();
+        }
+      }
+    } catch (e) {
+      print('Send comment error: $e');
+      // fallback to parent HTTP sender if provided
+      widget.onCommentAdded?.call();
+    }
   }
 
   @override
@@ -655,12 +795,12 @@ Future<void> _tryAlternativeVideoLoad() async {
           bottom: 100,
           child: Column(
             children: [
-              // Like button
+              // Like button (uses WebSocket if available, falls back to parent's handler)
               _ActionButton(
                 icon: widget.video.isLiked ? Icons.favorite : Icons.favorite_border,
                 count: widget.video.likesCount,
                 color: widget.video.isLiked ? Colors.red : Colors.white,
-                onTap: widget.onLike,
+                onTap: _likeViaWebSocket,
               ),
               SizedBox(height: 20),
 
@@ -668,7 +808,10 @@ Future<void> _tryAlternativeVideoLoad() async {
               _ActionButton(
                 icon: Icons.chat_bubble_outline,
                 count: widget.video.commentsCount,
-                onTap: widget.onComment,
+                onTap: () {
+                  // open comments sheet (parent)
+                  widget.onComment();
+                },
               ),
               SizedBox(height: 20),
 
