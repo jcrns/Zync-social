@@ -1,8 +1,5 @@
 import 'dart:io';
 import 'package:bbdsocial/services/UserService.dart';
-import 'package:http/http.dart' as http;
-import 'package:shared_preferences/shared_preferences.dart';
-import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:nb_utils/nb_utils.dart';
 import 'package:bbdsocial/models/VideoEditorModel.dart' show TextOverlay, TrimData, CropData;
@@ -17,12 +14,13 @@ enum EditorTool { none, trim, text, crop }
 
 class _CropPainter extends CustomPainter {
   final Rect cropRect;
+  final bool showGrid;
 
-  _CropPainter(this.cropRect);
+  _CropPainter(this.cropRect, {this.showGrid = true});
 
   @override
   void paint(Canvas canvas, Size size) {
-    final outsidePaint = Paint()..color = Colors.black45;
+    final outsidePaint = Paint()..color = Colors.black54;
     final full = Rect.fromLTWH(0, 0, size.width, size.height);
     final path = Path()
       ..addRect(full)
@@ -32,21 +30,45 @@ class _CropPainter extends CustomPainter {
     final border = Paint()
       ..color = Colors.white
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 2.0;
+      ..strokeWidth = 3.0;
     canvas.drawRect(cropRect, border);
 
-    final gridPaint = Paint()
-      ..color = Colors.white70
-      ..strokeWidth = 1.0;
+    if (showGrid) {
+      final gridPaint = Paint()
+        ..color = Colors.white54
+        ..strokeWidth = 1.0;
 
-    final dx = cropRect.width / 3;
-    final dy = cropRect.height / 3;
-    for (int i = 1; i <= 2; i++) {
-      final x = cropRect.left + dx * i;
-      canvas.drawLine(Offset(x, cropRect.top), Offset(x, cropRect.bottom), gridPaint);
-      final y = cropRect.top + dy * i;
-      canvas.drawLine(Offset(cropRect.left, y), Offset(cropRect.right, y), gridPaint);
+      final dx = cropRect.width / 3;
+      final dy = cropRect.height / 3;
+      for (int i = 1; i <= 2; i++) {
+        final x = cropRect.left + dx * i;
+        canvas.drawLine(Offset(x, cropRect.top), Offset(x, cropRect.bottom), gridPaint);
+        final y = cropRect.top + dy * i;
+        canvas.drawLine(Offset(cropRect.left, y), Offset(cropRect.right, y), gridPaint);
+      }
     }
+
+    // Draw corner indicators for better visibility
+    final cornerPaint = Paint()
+      ..color = Colors.white
+      ..strokeWidth = 2.0;
+    
+    final cornerSize = 20.0;
+    // Top-left corner
+    canvas.drawLine(cropRect.topLeft, cropRect.topLeft + Offset(cornerSize, 0), cornerPaint);
+    canvas.drawLine(cropRect.topLeft, cropRect.topLeft + Offset(0, cornerSize), cornerPaint);
+    
+    // Top-right corner
+    canvas.drawLine(cropRect.topRight, cropRect.topRight - Offset(cornerSize, 0), cornerPaint);
+    canvas.drawLine(cropRect.topRight, cropRect.topRight + Offset(0, cornerSize), cornerPaint);
+    
+    // Bottom-left corner
+    canvas.drawLine(cropRect.bottomLeft, cropRect.bottomLeft + Offset(cornerSize, 0), cornerPaint);
+    canvas.drawLine(cropRect.bottomLeft, cropRect.bottomLeft - Offset(0, cornerSize), cornerPaint);
+    
+    // Bottom-right corner
+    canvas.drawLine(cropRect.bottomRight, cropRect.bottomRight - Offset(cornerSize, 0), cornerPaint);
+    canvas.drawLine(cropRect.bottomRight, cropRect.bottomRight - Offset(0, cornerSize), cornerPaint);
   }
 
   @override
@@ -72,41 +94,51 @@ class _SVVideoEditorScreenState extends State<SVVideoEditorScreen> {
   GlobalKey _videoKey = GlobalKey();
   GlobalKey _aspectKey = GlobalKey();
 
-  // Crop state
+  // Enhanced Crop state
   bool _isCropping = false;
   Rect? _cropRect;
   CropData? _appliedCrop;
   String? _activeHandle;
   bool _isProcessingCrop = false;
+  double? _fixedAspectRatio; // For maintaining aspect ratio during crop
+  Offset? _dragStartPoint;
+  Rect? _dragStartRect;
 
   // Trim state
   bool _isTrimming = false;
   bool _isProcessingTrim = false;
 
-  // State variable to control the visibility of the indicator
   bool _showCroppedIndicator = false;
-
-  // Text formatting
   Color _selectedColor = Colors.white;
   double _selectedFontSize = 24.0;
   String _selectedFont = 'Roboto';
   FontWeight _selectedFontWeight = FontWeight.bold;
-
   bool _isUploading = false;
   String? _uploadError;
-
-  // New state variable to track if video is playing
   bool _isPlaying = false;
   bool _showPlayButton = true;
-
-  // Store original video path for resetting trim
-  late String _originalVideoPath;
+  // late String _originalVideoPath;
+  late String _currentVideoPath; // Add this
+  // Aspect ratio presets
+  final List<Map<String, dynamic>> _aspectRatios = [
+    {'name': 'Free', 'ratio': null},
+    {'name': '1:1', 'ratio': 1.0},
+    {'name': '16:9', 'ratio': 16.0 / 9.0},
+    {'name': '9:16', 'ratio': 9.0 / 16.0},
+    {'name': '4:3', 'ratio': 4.0 / 3.0},
+    {'name': '3:4', 'ratio': 3.0 / 4.0},
+  ];
 
   @override
   void initState() {
     super.initState();
-    _originalVideoPath = widget.videoPath;
-    _controller = VideoPlayerController.file(File(widget.videoPath))
+    _currentVideoPath = widget.videoPath; // Modify this line
+    _initializeVideoController(_currentVideoPath); // Pass the path
+  }
+
+
+void _initializeVideoController(String path) { // Modify to accept a path
+  _controller = VideoPlayerController.file(File(path))
       ..initialize().then((_) {
         setState(() {
           _controller.setLooping(true);
@@ -115,11 +147,9 @@ class _SVVideoEditorScreenState extends State<SVVideoEditorScreen> {
             endValueMs: _controller.value.duration.inMilliseconds,
             maxDurationMs: _controller.value.duration.inMilliseconds,
           );
-          // Auto-play the video when initialized
           _controller.play();
           _isPlaying = true;
           
-          // Hide play button after 2 seconds if video is playing
           Future.delayed(Duration(seconds: 2), () {
             if (mounted && _isPlaying) {
               setState(() {
@@ -130,9 +160,7 @@ class _SVVideoEditorScreenState extends State<SVVideoEditorScreen> {
         });
       });
     
-    // Listen to video player state changes
     _controller.addListener(_videoListener);
-    _checkAndStartTimer();
   }
 
   void _videoListener() {
@@ -155,7 +183,6 @@ class _SVVideoEditorScreenState extends State<SVVideoEditorScreen> {
         });
       }
 
-      // Handle trim playback
       if (_isTrimming && _trimData != null && isPlaying) {
         final currentPosition = _controller.value.position.inMilliseconds;
         if (currentPosition >= _trimData!.endValueMs) {
@@ -164,6 +191,7 @@ class _SVVideoEditorScreenState extends State<SVVideoEditorScreen> {
       }
     }
   }
+
 
   @override
   void dispose() {
@@ -195,7 +223,221 @@ class _SVVideoEditorScreenState extends State<SVVideoEditorScreen> {
     });
   }
 
-  // Simplified upload method using UserService
+  void _startCrop() {
+    setState(() {
+      _isCropping = true;
+      _activeTool = EditorTool.crop;
+      
+      // Initialize crop rectangle with safe default size
+      final renderBox = _aspectKey.currentContext?.findRenderObject() as RenderBox?;
+      if (renderBox != null) {
+        final videoRect = _getVideoDisplaySize(renderBox.size);
+        
+        // Start with a centered rectangle that's 80% of video size
+        final defaultWidth = videoRect.width * 0.8;
+        final defaultHeight = videoRect.height * 0.8;
+        final left = videoRect.left + (videoRect.width - defaultWidth) / 2;
+        final top = videoRect.top + (videoRect.height - defaultHeight) / 2;
+        
+        _cropRect = Rect.fromLTWH(
+          left.clamp(videoRect.left, videoRect.right - defaultWidth),
+          top.clamp(videoRect.top, videoRect.bottom - defaultHeight),
+          defaultWidth,
+          defaultHeight,
+        );
+      }
+    });
+  }
+
+
+  Rect _getVideoDisplaySize(Size containerSize) {
+    if (!_controller.value.isInitialized) {
+      return Rect.fromLTWH(0, 0, containerSize.width, containerSize.height);
+    }
+
+    final videoAspect = _controller.value.aspectRatio;
+    final containerAspect = containerSize.width / containerSize.height;
+    
+    double width, height, left, top;
+    
+    if (videoAspect > containerAspect) {
+      // Video is wider than container - fit to width
+      width = containerSize.width;
+      height = containerSize.width / videoAspect;
+      left = 0;
+      top = (containerSize.height - height) / 2;
+    } else {
+      // Video is taller than container - fit to height
+      height = containerSize.height;
+      width = containerSize.height * videoAspect;
+      left = (containerSize.width - width) / 2;
+      top = 0;
+    }
+    
+    return Rect.fromLTWH(left, top, width, height);
+  }
+
+  void _onPanStartCrop(DragStartDetails details, String handleType) {
+    final renderBox = _aspectKey.currentContext?.findRenderObject() as RenderBox?;
+    if (renderBox == null || _cropRect == null) return;
+
+    final videoRect = _getVideoDisplaySize(renderBox.size);
+    final localPos = details.localPosition;
+
+    // Ensure we're within video bounds
+    if (!videoRect.contains(localPos)) return;
+
+    setState(() {
+      _activeHandle = handleType;
+      _dragStartPoint = localPos;
+      _dragStartRect = _cropRect;
+    });
+  }
+
+void _onPanUpdateCrop(DragUpdateDetails details) {
+    if (_dragStartPoint == null || _dragStartRect == null || _cropRect == null) return;
+
+    final renderBox = _aspectKey.currentContext?.findRenderObject() as RenderBox?;
+    if (renderBox == null) return;
+
+    final videoRect = _getVideoDisplaySize(renderBox.size);
+    final delta = details.localPosition - _dragStartPoint!;
+    
+    setState(() {
+      _cropRect = _calculateNewCropRect(
+        _dragStartRect!,
+        delta,
+        _activeHandle!,
+        videoRect,
+        _fixedAspectRatio,
+      );
+    });
+  }
+
+  Rect _calculateNewCropRect(Rect startRect, Offset delta, String handleType, Rect bounds, double? aspectRatio) {
+    double newLeft = startRect.left;
+    double newTop = startRect.top;
+    double newRight = startRect.right;
+    double newBottom = startRect.bottom;
+
+    switch (handleType) {
+      case 'move':
+        newLeft = (startRect.left + delta.dx).clamp(bounds.left, bounds.right - startRect.width);
+        newTop = (startRect.top + delta.dy).clamp(bounds.top, bounds.bottom - startRect.height);
+        newRight = newLeft + startRect.width;
+        newBottom = newTop + startRect.height;
+        break;
+
+      case 'tl':
+        newLeft = (startRect.left + delta.dx).clamp(bounds.left, startRect.right - 50);
+        newTop = (startRect.top + delta.dy).clamp(bounds.top, startRect.bottom - 50);
+        if (aspectRatio != null) {
+          final newWidth = startRect.right - newLeft;
+          final newHeight = newWidth / aspectRatio;
+          newTop = startRect.bottom - newHeight;
+          newLeft = startRect.right - newWidth;
+        }
+        break;
+
+      case 'tr':
+        newRight = (startRect.right + delta.dx).clamp(startRect.left + 50, bounds.right);
+        newTop = (startRect.top + delta.dy).clamp(bounds.top, startRect.bottom - 50);
+        if (aspectRatio != null) {
+          final newWidth = newRight - startRect.left;
+          final newHeight = newWidth / aspectRatio;
+          newTop = startRect.bottom - newHeight;
+          newRight = startRect.left + newWidth;
+        }
+        break;
+
+      case 'bl':
+        newLeft = (startRect.left + delta.dx).clamp(bounds.left, startRect.right - 50);
+        newBottom = (startRect.bottom + delta.dy).clamp(startRect.top + 50, bounds.bottom);
+        if (aspectRatio != null) {
+          final newWidth = startRect.right - newLeft;
+          final newHeight = newWidth / aspectRatio;
+          newBottom = startRect.top + newHeight;
+          newLeft = startRect.right - newWidth;
+        }
+        break;
+
+      case 'br':
+        newRight = (startRect.right + delta.dx).clamp(startRect.left + 50, bounds.right);
+        newBottom = (startRect.bottom + delta.dy).clamp(startRect.top + 50, bounds.bottom);
+        if (aspectRatio != null) {
+          final newWidth = newRight - startRect.left;
+          final newHeight = newWidth / aspectRatio;
+          newBottom = startRect.top + newHeight;
+          newRight = startRect.left + newWidth;
+        }
+        break;
+
+      case 't':
+        newTop = (startRect.top + delta.dy).clamp(bounds.top, startRect.bottom - 50);
+        if (aspectRatio != null) {
+          final newHeight = startRect.bottom - newTop;
+          final newWidth = newHeight * aspectRatio;
+          newLeft = startRect.left + (startRect.width - newWidth) / 2;
+          newRight = newLeft + newWidth;
+        }
+        break;
+
+      case 'b':
+        newBottom = (startRect.bottom + delta.dy).clamp(startRect.top + 50, bounds.bottom);
+        if (aspectRatio != null) {
+          final newHeight = newBottom - startRect.top;
+          final newWidth = newHeight * aspectRatio;
+          newLeft = startRect.left + (startRect.width - newWidth) / 2;
+          newRight = newLeft + newWidth;
+        }
+        break;
+
+      case 'l':
+        newLeft = (startRect.left + delta.dx).clamp(bounds.left, startRect.right - 50);
+        if (aspectRatio != null) {
+          final newWidth = startRect.right - newLeft;
+          final newHeight = newWidth / aspectRatio;
+          newTop = startRect.top + (startRect.height - newHeight) / 2;
+          newBottom = newTop + newHeight;
+        }
+        break;
+
+      case 'r':
+        newRight = (startRect.right + delta.dx).clamp(startRect.left + 50, bounds.right);
+        if (aspectRatio != null) {
+          final newWidth = newRight - startRect.left;
+          final newHeight = newWidth / aspectRatio;
+          newTop = startRect.top + (startRect.height - newHeight) / 2;
+          newBottom = newTop + newHeight;
+        }
+        break;
+    }
+
+    // Ensure final rect is within bounds and has minimum size
+    final rect = Rect.fromLTRB(newLeft, newTop, newRight, newBottom);
+    return _clampRectToBounds(rect, bounds);
+  }
+
+  Rect _clampRectToBounds(Rect rect, Rect bounds) {
+    double left = rect.left.clamp(bounds.left, bounds.right - 50);
+    double top = rect.top.clamp(bounds.top, bounds.bottom - 50);
+    double right = rect.right.clamp(left + 50, bounds.right);
+    double bottom = rect.bottom.clamp(top + 50, bounds.bottom);
+    
+    return Rect.fromLTRB(left, top, right, bottom);
+  }
+
+  void _onPanEndCrop(DragEndDetails details) {
+    setState(() {
+      _activeHandle = null;
+      _dragStartPoint = null;
+      _dragStartRect = null;
+    });
+  }
+
+
+
+  // Enhanced upload function that includes text overlays
   Future<void> _uploadVideo() async {
     if (_isUploading) return;
 
@@ -214,6 +456,11 @@ class _SVVideoEditorScreenState extends State<SVVideoEditorScreen> {
       
       if (!await videoFile.exists()) {
         throw Exception('Video file not found at path: $videoPath');
+      }
+
+      // If there are text overlays, we need to burn them into the video
+      if (_textOverlays.isNotEmpty) {
+        videoFile = await _burnTextOverlaysIntoVideo(videoFile);
       }
 
       // Use UserService for API call
@@ -239,6 +486,124 @@ class _SVVideoEditorScreenState extends State<SVVideoEditorScreen> {
       }
     }
   }
+
+  // Function to burn text overlays into the video
+  Future<File> _burnTextOverlaysIntoVideo(File originalVideo) async {
+    if (_textOverlays.isEmpty) return originalVideo;
+
+    try {
+      final tempDir = await getTemporaryDirectory();
+      final outPath = '${tempDir.path}/video_with_text_${DateTime.now().millisecondsSinceEpoch}.mp4';
+
+      // Get video dimensions from controller
+      final videoWidth = _controller.value.size.width.toInt();
+      final videoHeight = _controller.value.size.height.toInt();
+
+      // Build FFmpeg drawtext filters for each overlay
+      String drawtextFilters = '';
+      for (int i = 0; i < _textOverlays.length; i++) {
+        final overlay = _textOverlays[i];
+        
+        // Convert position from screen coordinates to video coordinates
+        final renderBox = _videoKey.currentContext?.findRenderObject() as RenderBox?;
+        if (renderBox != null) {
+          final screenSize = renderBox.size;
+          final videoRect = _getVideoDisplaySize(screenSize);
+          
+          // Calculate relative position within video
+          final relX = (overlay.position.dx - videoRect.left) / videoRect.width;
+          final relY = (overlay.position.dy - videoRect.top) / videoRect.height;
+          
+          // Convert to video pixel coordinates
+          final x = (relX * videoWidth).round();
+          final y = (relY * videoHeight).round();
+          
+          // Prepare text and style parameters
+          final text = overlay.text.replaceAll("'", "\\'");
+          final fontSize = (overlay.style.fontSize! * (videoHeight / 720)).round(); // Scale font size
+          final fontColor = _colorToHex(overlay.style.color!);
+          final fontFile = _getFontFile(overlay.style.fontFamily ?? 'Arial');
+          
+          String fontWeight = 'normal';
+          if (overlay.style.fontWeight == FontWeight.bold) {
+            fontWeight = 'bold';
+          } else if (overlay.style.fontWeight == FontWeight.w100) {
+            fontWeight = '100';
+          } else if (overlay.style.fontWeight == FontWeight.w200) {
+            fontWeight = '200';
+          } else if (overlay.style.fontWeight == FontWeight.w300) {
+            fontWeight = '300';
+          } else if (overlay.style.fontWeight == FontWeight.w400) {
+            fontWeight = 'normal';
+          } else if (overlay.style.fontWeight == FontWeight.w500) {
+            fontWeight = '500';
+          } else if (overlay.style.fontWeight == FontWeight.w600) {
+            fontWeight = '600';
+          } else if (overlay.style.fontWeight == FontWeight.w700) {
+            fontWeight = 'bold';
+          } else if (overlay.style.fontWeight == FontWeight.w800) {
+            fontWeight = '800';
+          } else if (overlay.style.fontWeight == FontWeight.w900) {
+            fontWeight = '900';
+          }
+          
+          drawtextFilters += 
+            'drawtext=text=\'$text\':x=$x:y=$y:fontsize=$fontSize:fontcolor=$fontColor:fontweight=$fontWeight';
+          
+          if (fontFile.isNotEmpty) {
+            drawtextFilters += ':fontfile=$fontFile';
+          }
+          
+          // Add shadow if present
+          if (overlay.style.shadows != null && overlay.style.shadows!.isNotEmpty) {
+            final shadow = overlay.style.shadows!.first;
+            drawtextFilters += ':shadowcolor=#${shadow.color.value.toRadixString(16).padLeft(8, '0')}';
+            drawtextFilters += ':shadowx=${shadow.offset.dx.round()}';
+            drawtextFilters += ':shadowy=${shadow.offset.dy.round()}';
+          }
+          
+          if (i < _textOverlays.length - 1) {
+            drawtextFilters += ',';
+          }
+        }
+      }
+
+      final cmd = '-i "${originalVideo.path}" -vf "$drawtextFilters" -c:a copy "$outPath"';
+      
+      final session = await FFmpegKit.execute(cmd);
+      final returnCode = await session.getReturnCode();
+      
+      if (returnCode != null && returnCode.isValueSuccess()) {
+        return File(outPath);
+      } else {
+        throw Exception('Failed to add text overlays to video');
+      }
+    } catch (e) {
+      print('Error burning text overlays: $e');
+      // If text overlay burning fails, return original video
+      return originalVideo;
+    }
+  }
+
+  // Helper function to convert color to hex
+  String _colorToHex(Color color) {
+    return '#${color.value.toRadixString(16).padLeft(8, '0')}';
+  }
+
+  // Helper function to get font file path
+  String _getFontFile(String fontFamily) {
+    // Map common font families to their file names
+    final fontMap = {
+      'Roboto': 'Roboto-Regular.ttf',
+      'Arial': 'arial.ttf',
+      'Times New Roman': 'times.ttf',
+      'Courier New': 'cour.ttf',
+    };
+    
+    final fileName = fontMap[fontFamily] ?? 'Arial.ttf';
+    return '/system/fonts/$fileName'; // Android font path
+  }
+
 
   void _handlePost() async {
     bool confirmUpload = await showDialog(
@@ -296,7 +661,11 @@ class _SVVideoEditorScreenState extends State<SVVideoEditorScreen> {
       final startSeconds = _trimData!.startValueMs / 1000;
       final durationSeconds = (_trimData!.endValueMs - _trimData!.startValueMs) / 1000;
 
-      final cmd = '-i "$_originalVideoPath" -ss $startSeconds -t $durationSeconds -c copy "$outPath"';
+      // Use _currentVideoPath instead of _originalVideoPath
+      // final cmd = '-i "$_currentVideoPath" -ss $startSeconds -t $durationSeconds -c copy "$outPath"';
+      // In _burnTextOverlaysIntoVideo function, update the command to use _currentVideoPath:
+      final cmd = '-i "$_currentVideoPath" -ss $startSeconds -t $durationSeconds -c copy "$outPath"';
+
       toast('Trimming video...');
       
       await FFmpegKit.executeAsync(cmd, (session) async {
@@ -304,6 +673,8 @@ class _SVVideoEditorScreenState extends State<SVVideoEditorScreen> {
         if (returnCode != null && returnCode.isValueSuccess()) {
           await _controller.pause();
           await _controller.dispose();
+          
+          _currentVideoPath = outPath; // Update the current path
           
           _controller = VideoPlayerController.file(File(outPath))
             ..initialize().then((_) {
@@ -551,6 +922,8 @@ class _SVVideoEditorScreenState extends State<SVVideoEditorScreen> {
     return '#${c.value.toRadixString(16).padLeft(8, '0').toUpperCase()}';
   }
 
+  // Enhanced Crop Application with vertical aspect ratio preservation
+// Replace the entire _handleCrop function with this corrected version
   void _handleCrop() async {
     if (_cropRect == null) {
       setState(() => _isCropping = false);
@@ -563,89 +936,75 @@ class _SVVideoEditorScreenState extends State<SVVideoEditorScreen> {
       return;
     }
 
-    final videoWidth = _controller.value.size.width;
-    final videoHeight = _controller.value.size.height;
-    
-    final displaySize = renderBox.size;
-    
-    final videoAspect = videoWidth / videoHeight;
-    final displayAspect = displaySize.width / displaySize.height;
-    
-    double contentWidth, contentHeight, contentX, contentY;
-    
-    if (videoAspect > displayAspect) {
-      contentWidth = displaySize.width;
-      contentHeight = displaySize.width / videoAspect;
-      contentX = 0;
-      contentY = (displaySize.height - contentHeight) / 2;
-    } else {
-      contentHeight = displaySize.height;
-      contentWidth = displaySize.height * videoAspect;
-      contentX = (displaySize.width - contentWidth) / 2;
-      contentY = 0;
-    }
-    
-    final clampedLeft = _cropRect!.left.clamp(contentX, contentX + contentWidth);
-    final clampedTop = _cropRect!.top.clamp(contentY, contentY + contentHeight);
-    final clampedRight = _cropRect!.right.clamp(contentX, contentX + contentWidth);
-    final clampedBottom = _cropRect!.bottom.clamp(contentY, contentY + contentHeight);
-    
-    final relativeLeft = (clampedLeft - contentX) / contentWidth;
-    final relativeTop = (clampedTop - contentY) / contentHeight;
-    final relativeRight = (clampedRight - contentX) / contentWidth;
-    final relativeBottom = (clampedBottom - contentY) / contentHeight;
-    
-    final cropX = (relativeLeft * videoWidth).round();
-    final cropY = (relativeTop * videoHeight).round();
-    final cropW = ((relativeRight - relativeLeft) * videoWidth).round();
-    final cropH = ((relativeBottom - relativeTop) * videoHeight).round();
-
-    if (cropW <= 0 || cropH <= 0 || cropX < 0 || cropY < 0 || 
-        cropX + cropW > videoWidth || cropY + cropH > videoHeight) {
-      toast('Invalid crop area. Please select a smaller area.');
-      setState(() => _isCropping = false);
-      return;
-    }
-
-    if (cropW < 50 || cropH < 50) {
-      toast('Crop area is too small. Please select a larger area.');
-      setState(() => _isCropping = false);
-      return;
-    }
-
     setState(() {
       _isProcessingCrop = true;
-      _isCropping = false;
+      _isCropping = false; // Hide the crop UI
     });
 
     try {
-      final tempDir = await getTemporaryDirectory();
-      final outPath = '${tempDir.path}/cropped_${DateTime.now().millisecondsSinceEpoch}.mp4';
+      // 1. Get all necessary dimensions
+      final videoSize = _controller.value.size; // e.g., 1920x1080
+      final displayRect = _getVideoDisplaySize(renderBox.size); // The video's rect on screen
 
-      final cmd = '-i "$_originalVideoPath" -filter:v "crop=$cropW:$cropH:$cropX:$cropY" -c:a copy "$outPath"';
-      toast('Cropping video...');
+      // 2. Convert screen crop coordinates to actual video pixel coordinates
+      final scaleX = videoSize.width / displayRect.width;
+      final scaleY = videoSize.height / displayRect.height;
+
+      final cropX = (_cropRect!.left - displayRect.left) * scaleX;
+      final cropY = (_cropRect!.top - displayRect.top) * scaleY;
+      final cropW = _cropRect!.width * scaleX;
+      final cropH = _cropRect!.height * scaleY;
+
+      // Ensure calculated values are valid and within bounds
+      final validCropX = cropX.clamp(0, videoSize.width - 1).round();
+      final validCropY = cropY.clamp(0, videoSize.height - 1).round();
+      final validCropW = cropW.clamp(1, videoSize.width - validCropX).round();
+      final validCropH = cropH.clamp(1, videoSize.height - validCropY).round();
+
+      if (validCropW <= 0 || validCropH <= 0) {
+        throw Exception("Invalid crop dimensions.");
+      }
+
+      final tempDir = await getTemporaryDirectory();
+      final outPath = '${tempDir.path}/cropped_padded_${DateTime.now().millisecondsSinceEpoch}.mp4';
+
+      // 3. Define final output dimensions (9:16 aspect ratio)
+      final int outWidth = 720;
+      final int outHeight = 1280;
+
+      // 4. Build the FFmpeg command
+      // This command chains three filters:
+      // - crop: Extracts the selected rectangle from the original video.
+      // - scale: Resizes the cropped video to fit within the 720x1280 frame while maintaining aspect ratio.
+      // - pad: Places the scaled video onto a 720x1280 black background, centering it.
+      final String filterCommand =
+          "crop=${validCropW}:${validCropH}:${validCropX}:${validCropY}," +
+          "scale=$outWidth:$outHeight:force_original_aspect_ratio=decrease," +
+          "pad=$outWidth:$outHeight:(ow-iw)/2:(oh-ih)/2:color=black";
+
+      final String cmd = '-i "$_currentVideoPath" -vf "$filterCommand" -c:a copy "$outPath"';
       
+      toast('Applying crop...');
+
       await FFmpegKit.executeAsync(cmd, (session) async {
         final returnCode = await session.getReturnCode();
         if (returnCode != null && returnCode.isValueSuccess()) {
-          final cropData = CropData(
-            left: relativeLeft,
-            top: relativeTop,
-            right: relativeRight,
-            bottom: relativeBottom,
-          );
-          
+          // Update the controller with the newly processed video
           await _controller.pause();
           await _controller.dispose();
           
-          _controller = VideoPlayerController.file(File(outPath))
+          _currentVideoPath = outPath; // Update the path to the new file
+          
+          // Re-initialize with the new video
+          _controller = VideoPlayerController.file(File(_currentVideoPath))
             ..initialize().then((_) {
               setState(() {
                 _isProcessingCrop = false;
                 _cropRect = null;
-                _appliedCrop = cropData;
                 _showCroppedIndicator = true;
-                // Update trim data for new video
+                _isCropping = false;
+                _activeTool = EditorTool.none;
+                
                 _trimData = TrimData(
                   startValueMs: 0,
                   endValueMs: _controller.value.duration.inMilliseconds,
@@ -655,510 +1014,297 @@ class _SVVideoEditorScreenState extends State<SVVideoEditorScreen> {
               _controller.setLooping(true);
               _controller.play();
               _isPlaying = true;
-              toast('Crop finished successfully');
+              toast('Crop applied successfully!');
               
-              Future.delayed(Duration(seconds: 5), () {
+              Future.delayed(Duration(seconds: 3), () {
                 if (mounted) {
-                  setState(() {
-                    _showCroppedIndicator = false;
-                  });
+                  setState(() => _showCroppedIndicator = false);
                 }
               });
             });
         } else {
-          setState(() => _isProcessingCrop = false);
+          final logs = await session.getLogsAsString();
+          print("FFmpeg failed: $logs");
+          if (mounted) {
+            setState(() => _isProcessingCrop = false);
+          }
           toast('Crop failed. Please try again.');
         }
       });
     } catch (e) {
-      setState(() => _isProcessingCrop = false);
-      toast('Crop error: $e');
+      print("Error during crop: $e");
+      if (mounted) {
+        setState(() => _isProcessingCrop = false);
+      }
+      toast('An error occurred: $e');
     }
+  }
+
+  Future<void> _applyCroppedVideo(String outPath, int x, int y, int w, int h) async {
+    final cropData = CropData(
+      left: x.toDouble(),
+      top: y.toDouble(),
+      right: (x + w).toDouble(),
+      bottom: (y + h).toDouble(),
+    );
+    
+    await _controller.pause();
+    await _controller.dispose();
+    
+    _controller = VideoPlayerController.file(File(outPath))
+      ..initialize().then((_) {
+        setState(() {
+          _isProcessingCrop = false;
+          _cropRect = null;
+          _appliedCrop = cropData;
+          _showCroppedIndicator = true;
+          _isCropping = false;
+          _activeTool = EditorTool.none;
+          
+          _trimData = TrimData(
+            startValueMs: 0,
+            endValueMs: _controller.value.duration.inMilliseconds,
+            maxDurationMs: _controller.value.duration.inMilliseconds,
+          );
+        });
+        _controller.setLooping(true);
+        _controller.play();
+        _isPlaying = true;
+        toast('Crop applied successfully');
+        
+        Future.delayed(Duration(seconds: 3), () {
+          if (mounted) {
+            setState(() => _showCroppedIndicator = false);
+          }
+        });
+      });
+  }
+
+    // Aspect Ratio Selection
+  Widget _buildAspectRatioSelector() {
+    if (!_isCropping) return SizedBox.shrink();
+
+    return Container(
+      height: 60,
+      color: Colors.black.withOpacity(0.8),
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        children: _aspectRatios.map((ratio) {
+          final isSelected = _fixedAspectRatio == ratio['ratio'];
+          return GestureDetector(
+            onTap: () {
+              setState(() {
+                _fixedAspectRatio = ratio['ratio'];
+                if (_cropRect != null && ratio['ratio'] != null) {
+                  _applyAspectRatio(ratio['ratio']!);
+                }
+              });
+            },
+            child: Container(
+              padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              margin: EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: isSelected ? SVAppColorPrimary : Colors.grey[800],
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Center(
+                child: Text(
+                  ratio['name'],
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                  ),
+                ),
+              ),
+            ),
+          );
+        }).toList(),
+      ),
+    );
+  }
+
+  void _applyAspectRatio(double ratio) {
+    final renderBox = _aspectKey.currentContext?.findRenderObject() as RenderBox?;
+    if (renderBox == null || _cropRect == null) return;
+
+    final videoRect = _getVideoDisplaySize(renderBox.size);
+    final center = _cropRect!.center;
+    final newWidth = _cropRect!.width;
+    final newHeight = newWidth / ratio;
+
+    // Ensure the new rect stays within bounds
+    final newRect = Rect.fromCenter(
+      center: center,
+      width: newWidth.clamp(50, videoRect.width),
+      height: newHeight.clamp(50, videoRect.height),
+    );
+
+    setState(() {
+      _cropRect = _clampRectToBounds(newRect, videoRect);
+    });
+  }
+
+  // Reset Crop
+  void _resetCrop() {
+    setState(() {
+      _cropRect = null;
+      _fixedAspectRatio = null;
+      _isCropping = false;
+      _activeTool = EditorTool.none;
+    });
   }
 
   // ... (Keep all your existing crop handle methods: _buildCropHandles, _buildCornerHandles, etc.)
   Widget _buildCropHandles(double width, double height) {
     if (_cropRect == null) return SizedBox.shrink();
 
+    final videoRect = _getVideoDisplaySize(Size(width, height));
+
     return Stack(
       children: [
-        ..._buildCornerHandles(width, height),
-        ..._buildEdgeHandles(width, height),
+        // Move handle (entire crop area)
         Positioned(
-          left: _cropRect!.left + 10,
-          top: _cropRect!.top + 10,
-          width: _cropRect!.width - 20,
-          height: _cropRect!.height - 20,
+          left: _cropRect!.left,
+          top: _cropRect!.top,
+          width: _cropRect!.width,
+          height: _cropRect!.height,
           child: GestureDetector(
-            onPanStart: (_) => setState(() => _activeHandle = 'move'),
-            onPanUpdate: (details) {
-              setState(() {
-                final dx = details.delta.dx;
-                final dy = details.delta.dy;
-                final newLeft = (_cropRect!.left + dx).clamp(0.0, width - _cropRect!.width);
-                final newTop = (_cropRect!.top + dy).clamp(0.0, height - _cropRect!.height);
-                _cropRect = Rect.fromLTWH(newLeft, newTop, _cropRect!.width, _cropRect!.height);
-              });
-            },
-            onPanEnd: (_) => setState(() => _activeHandle = null),
+            onPanStart: (details) => _onPanStartCrop(details, 'move'),
+            onPanUpdate: _onPanUpdateCrop,
+            onPanEnd: _onPanEndCrop,
             child: Container(color: Colors.transparent),
           ),
         ),
+
+        // Corner handles
+        _buildHandle(_cropRect!.left - 15, _cropRect!.top - 15, 'tl', videoRect),
+        _buildHandle(_cropRect!.right - 15, _cropRect!.top - 15, 'tr', videoRect),
+        _buildHandle(_cropRect!.left - 15, _cropRect!.bottom - 15, 'bl', videoRect),
+        _buildHandle(_cropRect!.right - 15, _cropRect!.bottom - 15, 'br', videoRect),
+
+        // Edge handles
+        _buildHandle(_cropRect!.left + _cropRect!.width / 2 - 15, _cropRect!.top - 15, 't', videoRect),
+        _buildHandle(_cropRect!.left + _cropRect!.width / 2 - 15, _cropRect!.bottom - 15, 'b', videoRect),
+        _buildHandle(_cropRect!.left - 15, _cropRect!.top + _cropRect!.height / 2 - 15, 'l', videoRect),
+        _buildHandle(_cropRect!.right - 15, _cropRect!.top + _cropRect!.height / 2 - 15, 'r', videoRect),
       ],
     );
   }
 
-  List<Widget> _buildCornerHandles(double width, double height) {
-    return [
-      _buildHandle(_cropRect!.left - 12, _cropRect!.top - 12, 'tl', width, height),
-      _buildHandle(_cropRect!.right - 12, _cropRect!.top - 12, 'tr', width, height),
-      _buildHandle(_cropRect!.left - 12, _cropRect!.bottom - 12, 'bl', width, height),
-      _buildHandle(_cropRect!.right - 12, _cropRect!.bottom - 12, 'br', width, height),
-    ];
-  }
-
-  List<Widget> _buildEdgeHandles(double width, double height) {
-    return [
-      _buildHandle(_cropRect!.left + _cropRect!.width / 2 - 12, _cropRect!.top - 12, 't', width, height),
-      _buildHandle(_cropRect!.left + _cropRect!.width / 2 - 12, _cropRect!.bottom - 12, 'b', width, height),
-      _buildHandle(_cropRect!.left - 12, _cropRect!.top + _cropRect!.height / 2 - 12, 'l', width, height),
-      _buildHandle(_cropRect!.right - 12, _cropRect!.top + _cropRect!.height / 2 - 12, 'r', width, height),
-    ];
-  }
-
-  Widget _buildHandle(double left, double top, String handleType, double maxWidth, double maxHeight) {
+  Widget _buildHandle(double left, double top, String handleType, Rect bounds) {
     return Positioned(
-      left: left,
-      top: top,
+      left: left.clamp(bounds.left - 15, bounds.right + 15),
+      top: top.clamp(bounds.top - 15, bounds.bottom + 15),
       child: GestureDetector(
-        onPanStart: (_) => setState(() => _activeHandle = handleType),
-        onPanUpdate: (details) {
-          setState(() {
-            switch (handleType) {
-              case 'tl':
-                _cropRect = Rect.fromLTRB(
-                  (_cropRect!.left + details.delta.dx).clamp(0.0, _cropRect!.right - 10),
-                  (_cropRect!.top + details.delta.dy).clamp(0.0, _cropRect!.bottom - 10),
-                  _cropRect!.right,
-                  _cropRect!.bottom,
-                );
-                break;
-              case 'tr':
-                _cropRect = Rect.fromLTRB(
-                  _cropRect!.left,
-                  (_cropRect!.top + details.delta.dy).clamp(0.0, _cropRect!.bottom - 10),
-                  (_cropRect!.right + details.delta.dx).clamp(_cropRect!.left + 10, maxWidth),
-                  _cropRect!.bottom,
-                );
-                break;
-              case 'bl':
-                _cropRect = Rect.fromLTRB(
-                  (_cropRect!.left + details.delta.dx).clamp(0.0, _cropRect!.right - 10),
-                  _cropRect!.top,
-                  _cropRect!.right,
-                  (_cropRect!.bottom + details.delta.dy).clamp(_cropRect!.top + 10, maxHeight),
-                );
-                break;
-              case 'br':
-                _cropRect = Rect.fromLTRB(
-                  _cropRect!.left,
-                  _cropRect!.top,
-                  (_cropRect!.right + details.delta.dx).clamp(_cropRect!.left + 10, maxWidth),
-                  (_cropRect!.bottom + details.delta.dy).clamp(_cropRect!.top + 10, maxHeight),
-                );
-                break;
-              case 't':
-                _cropRect = Rect.fromLTRB(
-                  _cropRect!.left,
-                  (_cropRect!.top + details.delta.dy).clamp(0.0, _cropRect!.bottom - 10),
-                  _cropRect!.right,
-                  _cropRect!.bottom,
-                );
-                break;
-              case 'b':
-                _cropRect = Rect.fromLTRB(
-                  _cropRect!.left,
-                  _cropRect!.top,
-                  _cropRect!.right,
-                  (_cropRect!.bottom + details.delta.dy).clamp(_cropRect!.top + 10, maxHeight),
-                );
-                break;
-              case 'l':
-                _cropRect = Rect.fromLTRB(
-                  (_cropRect!.left + details.delta.dx).clamp(0.0, _cropRect!.right - 10),
-                  _cropRect!.top,
-                  _cropRect!.right,
-                  _cropRect!.bottom,
-                );
-                break;
-              case 'r':
-                _cropRect = Rect.fromLTRB(
-                  _cropRect!.left,
-                  _cropRect!.top,
-                  (_cropRect!.right + details.delta.dx).clamp(_cropRect!.left + 10, maxWidth),
-                  _cropRect!.bottom,
-                );
-                break;
-            }
-          });
-        },
-        onPanEnd: (_) => setState(() => _activeHandle = null),
+        onPanStart: (details) => _onPanStartCrop(details, handleType),
+        onPanUpdate: _onPanUpdateCrop,
+        onPanEnd: _onPanEndCrop,
         child: Container(
-          width: 24,
-          height: 24,
-          decoration: BoxDecoration(color: Colors.white, shape: BoxShape.circle),
+          width: 30,
+          height: 30,
+          decoration: BoxDecoration(
+            color: Colors.white,
+            shape: BoxShape.circle,
+            border: Border.all(color: Colors.black, width: 2),
+          ),
         ),
       ),
     );
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.black,
-      appBar: AppBar(
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        leading: IconButton(
-          icon: Icon(Icons.close),
-          onPressed: () => Navigator.of(context).pop(),
-        ),
-        title: Text('Editor', style: boldTextStyle(color: Colors.white)),
-        centerTitle: true,
-        actions: [
-          if (_isUploading) ...[
-            Padding(
-              padding: EdgeInsets.all(16),
-              child: Row(
-                children: [
-                  SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                    ),
-                  ),
-                  SizedBox(width: 8),
-                  Text('Uploading...', style: TextStyle(color: Colors.white)),
-                ],
-              ),
-            ),
-          ] else if (_isTrimming) ...[
-            TextButton(
-              onPressed: _resetTrim,
-              child: Text('Cancel', style: TextStyle(color: Colors.white)),
-            ),
-            TextButton(
-              onPressed: _handleTrim,
-              child: Text('Apply', style: TextStyle(color: Colors.white)),
-            ),
-          ] else if (_isCropping) ...[
-            TextButton(
-              onPressed: () => setState(() {
-                _isCropping = false;
-                _cropRect = null;
-              }),
-              child: Text('Cancel', style: TextStyle(color: Colors.white)),
-            ),
-            TextButton(
-              onPressed: _handleCrop,
-              child: Text('Done', style: TextStyle(color: Colors.white)),
-            ),
-          ] else if (!_isProcessingCrop && !_isProcessingTrim) ...[
-            AppButton(
-              shapeBorder: RoundedRectangleBorder(borderRadius: radius(4)),
-              text: 'Post',
-              textStyle: secondaryTextStyle(color: Colors.white, size: 10),
-              onTap: _handlePost,
-              elevation: 0,
-              color: SVAppColorPrimary,
-              width: 50,
-              padding: EdgeInsets.all(0),
-            ).paddingAll(16),
-          ],
+
+// Remove or comment out the old _buildCornerHandles and _buildEdgeHandles functions
+// and replace them with these corrected versions:
+
+List<Widget> _buildCornerHandles(double width, double height) {
+  if (_cropRect == null) return [];
+  
+  final videoRect = _getVideoDisplaySize(Size(width, height));
+  
+  return [
+    _buildHandle(_cropRect!.left - 12, _cropRect!.top - 12, 'tl', videoRect),
+    _buildHandle(_cropRect!.right - 12, _cropRect!.top - 12, 'tr', videoRect),
+    _buildHandle(_cropRect!.left - 12, _cropRect!.bottom - 12, 'bl', videoRect),
+    _buildHandle(_cropRect!.right - 12, _cropRect!.bottom - 12, 'br', videoRect),
+  ];
+}
+
+List<Widget> _buildEdgeHandles(double width, double height) {
+  if (_cropRect == null) return [];
+  
+  final videoRect = _getVideoDisplaySize(Size(width, height));
+  
+  return [
+    _buildHandle(_cropRect!.left + _cropRect!.width / 2 - 12, _cropRect!.top - 12, 't', videoRect),
+    _buildHandle(_cropRect!.left + _cropRect!.width / 2 - 12, _cropRect!.bottom - 12, 'b', videoRect),
+    _buildHandle(_cropRect!.left - 12, _cropRect!.top + _cropRect!.height / 2 - 12, 'l', videoRect),
+    _buildHandle(_cropRect!.right - 12, _cropRect!.top + _cropRect!.height / 2 - 12, 'r', videoRect),
+  ];
+}
+
+Widget _buildProcessingOverlay() {
+  return Container(
+    color: Colors.black.withOpacity(0.7),
+    child: Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          CircularProgressIndicator(valueColor: AlwaysStoppedAnimation<Color>(SVAppColorPrimary)),
+          SizedBox(height: 16),
+          Text(
+            _isProcessingCrop ? 'Processing crop...' : 'Processing trim...', 
+            style: TextStyle(color: Colors.white)
+          ),
         ],
       ),
-      body: Stack(
-        children: [
-          Column(
+    ),
+  );
+}
+
+@override
+Widget build(BuildContext context) {
+  return Scaffold(
+    backgroundColor: Colors.black,
+    appBar: AppBar(
+      backgroundColor: Colors.transparent,
+      elevation: 0,
+      leading: IconButton(
+        icon: Icon(Icons.close),
+        onPressed: () => Navigator.of(context).pop(),
+      ),
+      title: Text('Editor', style: boldTextStyle(color: Colors.white)),
+      centerTitle: true,
+      actions: _buildAppBarActions(),
+    ),
+    body: Column(
+      children: [
+        if (_isCropping) _buildAspectRatioSelector(),
+        Expanded(
+          child: Stack(
             children: [
-              Expanded(
-                child: _controller.value.isInitialized
-                    ? Container(
-                        color: Colors.black,
-                        child: Stack(
-                          key: _videoKey,
-                          fit: StackFit.expand,
-                          children: [
-                            Center(
-                              child: LayoutBuilder(
-                                key: _aspectKey,
-                                builder: (context, constraints) {
-                                  final videoAspect = _controller.value.aspectRatio;
-                                  double width = constraints.maxWidth;
-                                  double height = width / videoAspect;
-                                  
-                                  if (height > constraints.maxHeight) {
-                                    height = constraints.maxHeight;
-                                    width = height * videoAspect;
-                                  }
-                                  
-                                  final left = (constraints.maxWidth - width) / 2;
-                                  final top = (constraints.maxHeight - height) / 2;
-
-                                  return Stack(
-                                    children: [
-                                      if (_uploadError != null && !_isUploading)
-                                        Positioned(
-                                          top: 100,
-                                          left: 20,
-                                          right: 20,
-                                          child: Container(
-                                            padding: EdgeInsets.all(12),
-                                            decoration: BoxDecoration(
-                                              color: Colors.red.withOpacity(0.8),
-                                              borderRadius: BorderRadius.circular(8),
-                                            ),
-                                            child: Row(
-                                              children: [
-                                                Icon(Icons.error, color: Colors.white),
-                                                SizedBox(width: 8),
-                                                Expanded(
-                                                  child: Text(
-                                                    _uploadError!,
-                                                    style: TextStyle(color: Colors.white),
-                                                    maxLines: 2,
-                                                  ),
-                                                ),
-                                                IconButton(
-                                                  icon: Icon(Icons.close, color: Colors.white),
-                                                  onPressed: () => setState(() => _uploadError = null),
-                                                  padding: EdgeInsets.zero,
-                                                  iconSize: 20,
-                                                ),
-                                              ],
-                                            ),
-                                          ),
-                                        ),
-                                      Positioned(
-                                        left: left,
-                                        top: top,
-                                        width: width,
-                                        height: height,
-                                        child: GestureDetector(
-                                          onTap: () {
-                                            // Only toggle play/pause if not cropping and not processing
-                                            if (!_isCropping && !_isProcessingCrop && !_isProcessingTrim) {
-                                              _togglePlayPause();
-                                            }
-                                          },
-                                          onTapDown: (details) {
-                                            if (_activeTool == EditorTool.crop && !_isProcessingCrop && !_isProcessingTrim) {
-                                              final local = details.localPosition;
-                                              if (_cropRect == null) {
-                                                setState(() {
-                                                  _isCropping = true;
-                                                  final defaultW = width * 0.7;
-                                                  final defaultH = height * 0.7;
-                                                  final leftPos = (local.dx - defaultW / 2).clamp(0.0, width - defaultW);
-                                                  final topPos = (local.dy - defaultH / 2).clamp(0.0, height - defaultH);
-                                                  _cropRect = Rect.fromLTWH(leftPos, topPos, defaultW, defaultH);
-                                                });
-                                              }
-                                            }
-                                          },
-                                          child: Stack(
-                                            fit: StackFit.expand,
-                                            children: [
-                                              VideoPlayer(_controller),
-                                              // Transparent play button overlay
-                                              if (_showPlayButton && !_isCropping && !_isProcessingCrop && !_isProcessingTrim)
-                                                Container(
-                                                  color: Colors.black.withOpacity(0.3),
-                                                  child: Center(
-                                                    child: Container(
-                                                      width: 80,
-                                                      height: 80,
-                                                      decoration: BoxDecoration(
-                                                        color: Colors.black.withOpacity(0.5),
-                                                        shape: BoxShape.circle,
-                                                      ),
-                                                      child: Icon(
-                                                        _isPlaying ? Icons.pause : Icons.play_arrow,
-                                                        size: 40,
-                                                        color: Colors.white.withOpacity(0.8),
-                                                      ),
-                                                    ),
-                                                  ),
-                                                ),
-                                              if (_cropRect != null && !_isProcessingCrop) ...[
-                                                CustomPaint(painter: _CropPainter(_cropRect!)),
-                                                _buildCropHandles(width, height),
-                                              ],
-                                            ],
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  );
-                                },
-                              ),
-                            ),
-                            ..._textOverlays.asMap().entries.map((entry) {
-                              final i = entry.key;
-                              final overlay = entry.value;
-                              return Positioned(
-                                left: overlay.position.dx,
-                                top: overlay.position.dy,
-                                child: GestureDetector(
-                                  onPanUpdate: (details) {
-                                    final renderBox = _videoKey.currentContext?.findRenderObject() as RenderBox?;
-                                    final newPos = Offset(
-                                      overlay.position.dx + details.delta.dx,
-                                      overlay.position.dy + details.delta.dy,
-                                    );
-
-                                    if (renderBox != null) {
-                                      final size = renderBox.size;
-                                      const removeThreshold = 30.0;
-                                      if (newPos.dx < -removeThreshold || newPos.dx > size.width + removeThreshold || 
-                                          newPos.dy < -removeThreshold || newPos.dy > size.height + removeThreshold) {
-                                        setState(() => _textOverlays.removeAt(i));
-                                        return;
-                                      }
-                                    }
-
-                                    setState(() {
-                                      _textOverlays[i] = TextOverlay(
-                                        text: overlay.text,
-                                        position: newPos,
-                                        style: overlay.style,
-                                      );
-                                    });
-                                  },
-                                  child: Container(
-                                    padding: EdgeInsets.all(8),
-                                    color: Colors.black.withOpacity(0.3),
-                                    child: Text(overlay.text, style: overlay.style),
-                                  ),
-                                ),
-                              );
-                            }).toList(),
-                            if (_selectedSound != null && !_isProcessingCrop && !_isProcessingTrim)
-                              Positioned(
-                                top: 12,
-                                left: 12,
-                                child: Container(
-                                  padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                                  decoration: BoxDecoration(
-                                    color: Colors.black.withOpacity(0.6),
-                                    borderRadius: BorderRadius.circular(24),
-                                    border: Border.all(color: Colors.white12),
-                                  ),
-                                  child: Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      Icon(Icons.music_note, size: 16, color: Colors.white70),
-                                      SizedBox(width: 8),
-                                      Column(
-                                        crossAxisAlignment: CrossAxisAlignment.start,
-                                        children: [
-                                          Text(
-                                            _selectedSound!['title'] ?? '',
-                                            style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
-                                            maxLines: 1,
-                                            overflow: TextOverflow.ellipsis,
-                                          ),
-                                          Text(
-                                            _selectedSound!['artist'] ?? '',
-                                            style: TextStyle(color: Colors.white70, fontSize: 10),
-                                            maxLines: 1,
-                                            overflow: TextOverflow.ellipsis,
-                                          ),
-                                        ],
-                                      ),
-                                      SizedBox(width: 8),
-                                      GestureDetector(
-                                        onTap: () => setState(() => _selectedSound = null),
-                                        child: Container(
-                                          width: 22,
-                                          height: 22,
-                                          decoration: BoxDecoration(
-                                            color: Colors.white12,
-                                            shape: BoxShape.circle,
-                                          ),
-                                          child: Icon(Icons.close, size: 14, color: Colors.white),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                            if (_showCroppedIndicator)
-                              Positioned(
-                                top: _selectedSound != null ? 70 : 12,
-                                right: 12,
-                                child: Container(
-                                  padding: EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                                  decoration: BoxDecoration(
-                                    color: Colors.black.withOpacity(0.6),
-                                    borderRadius: BorderRadius.circular(24),
-                                    border: Border.all(color: Colors.white12),
-                                  ),
-                                  child: Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      Icon(Icons.crop, size: 16, color: Colors.white70),
-                                      SizedBox(width: 8),
-                                      Text('Cropped', style: TextStyle(color: Colors.white, fontSize: 12)),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                          ],
-                        ),
-                      )
-                    : Center(child: CircularProgressIndicator()),
-              ),
-              // Show timeline only when trim tool is active
-              if (_controller.value.isInitialized && _trimData != null && _isTrimming && !_isProcessingTrim)
-                SVVideoTimeline(
-                  controller: _controller,
-                  trimData: _trimData!,
-                  onTrimChanged: (start, end) {
-                    setState(() {
-                      _trimData!.startValueMs = start;
-                      _trimData!.endValueMs = end;
-                    });
-                    // Seek to start position when trim changes
-                    _controller.seekTo(Duration(milliseconds: start));
-                  },
-                ),
-              if (!_isProcessingCrop && !_isProcessingTrim) _buildEditingToolbar(),
+              _buildVideoPreview(),
+              if (_isProcessingCrop || _isProcessingTrim) _buildProcessingOverlay(),
             ],
           ),
-          if (_isProcessingCrop || _isProcessingTrim)
-            Container(
-              color: Colors.black.withOpacity(0.7),
-              child: Center(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    CircularProgressIndicator(valueColor: AlwaysStoppedAnimation<Color>(SVAppColorPrimary)),
-                    SizedBox(height: 16),
-                    Text(
-                      _isProcessingCrop ? 'Processing crop...' : 'Processing trim...', 
-                      style: TextStyle(color: Colors.white)
-                    ),
-                  ],
-                ),
-              ),
-            ),
-        ],
-      ),
-    );
-  }
+        ),
+        // Show timeline only when trim tool is active
+        if (_controller.value.isInitialized && _trimData != null && _isTrimming && !_isProcessingTrim)
+          SVVideoTimeline(
+            controller: _controller,
+            trimData: _trimData!,
+            onTrimChanged: (start, end) {
+              setState(() {
+                _trimData!.startValueMs = start;
+                _trimData!.endValueMs = end;
+              });
+              _controller.seekTo(Duration(milliseconds: start));
+            },
+          ),
+        if (!_isProcessingCrop && !_isProcessingTrim) _buildEditingToolbar(),
+      ],
+    ),
+  );
+}
 
   Widget _buildEditingToolbar() {
     return Container(
@@ -1167,57 +1313,345 @@ class _SVVideoEditorScreenState extends State<SVVideoEditorScreen> {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceAround,
         children: [
-          _buildToolButton(Icons.content_cut, 'Trim', EditorTool.trim, onTap: () {
-            setState(() {
-              if (_activeTool == EditorTool.trim) {
-                // If already in trim mode, exit it
-                _isTrimming = false;
-                _activeTool = EditorTool.none;
-              } else {
-                // Enter trim mode
-                _activeTool = EditorTool.trim;
-                _isTrimming = true;
-                _isCropping = false;
-                // Seek to start of trim range
-                if (_trimData != null) {
-                  _controller.seekTo(Duration(milliseconds: _trimData!.startValueMs));
-                }
-              }
-            });
-          }),
+          _buildToolButton(Icons.content_cut, 'Trim', EditorTool.trim, onTap: _handleTrimTool),
           _buildToolButton(Icons.text_fields, 'Text', EditorTool.text, onTap: _onAddText),
-          _buildToolButton(Icons.music_note, 'Sound', EditorTool.none, onTap: () async {
-            final result = await showModalBottomSheet<Map<String, String>>(
-              context: context,
-              builder: (bCtx) => SVSoundSelectionComponent(),
-            );
-            if (result != null) {
-              setState(() {
-                _selectedSound = result;
-                _activeTool = EditorTool.none;
-                _isTrimming = false;
-                _isCropping = false;
-              });
-            }
-          }),
-          _buildToolButton(Icons.crop, 'Crop', EditorTool.crop, onTap: () {
-            setState(() {
-              if (_activeTool == EditorTool.crop) {
-                // If already in crop mode, exit it
-                _isCropping = false;
-                _cropRect = null;
-                _activeTool = EditorTool.none;
-              } else {
-                // Enter crop mode
-                _activeTool = EditorTool.crop;
-                _isCropping = false; // Will be set to true when user taps on video
-                _isTrimming = false;
-              }
-            });
-          }),
+          _buildToolButton(Icons.music_note, 'Sound', EditorTool.none, onTap: _handleSoundTool),
+          _buildToolButton(Icons.crop, 'Crop', EditorTool.crop, onTap: _startCrop),
         ],
       ),
     );
+  }
+  Widget _buildUploadingIndicator() {
+    return Padding(
+      padding: EdgeInsets.all(16),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 20,
+            height: 20,
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+              valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+            ),
+          ),
+          SizedBox(width: 8),
+          Text('Uploading...', style: TextStyle(color: Colors.white)),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPostButton() {
+    return AppButton(
+      shapeBorder: RoundedRectangleBorder(borderRadius: radius(4)),
+      text: 'Post',
+      textStyle: secondaryTextStyle(color: Colors.white, size: 10),
+      onTap: _handlePost,
+      elevation: 0,
+      color: SVAppColorPrimary,
+      width: 50,
+      padding: EdgeInsets.all(0),
+    ).paddingAll(16);
+  }
+
+  Widget _buildVideoPreview() {
+  return _controller.value.isInitialized
+      ? Container(
+          color: Colors.black,
+          child: Stack(
+            key: _videoKey,
+            fit: StackFit.expand,
+            children: [
+              Center(
+                child: LayoutBuilder(
+                  key: _aspectKey,
+                  builder: (context, constraints) {
+                    final videoAspect = _controller.value.aspectRatio;
+                    double width = constraints.maxWidth;
+                    double height = width / videoAspect;
+                    
+                    if (height > constraints.maxHeight) {
+                      height = constraints.maxHeight;
+                      width = height * videoAspect;
+                    }
+                    
+                    final left = (constraints.maxWidth - width) / 2;
+                    final top = (constraints.maxHeight - height) / 2;
+
+                    return Stack(
+                      children: [
+                        if (_uploadError != null && !_isUploading)
+                          Positioned(
+                            top: 100,
+                            left: 20,
+                            right: 20,
+                            child: Container(
+                              padding: EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                color: Colors.red.withOpacity(0.8),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Row(
+                                children: [
+                                  Icon(Icons.error, color: Colors.white),
+                                  SizedBox(width: 8),
+                                  Expanded(
+                                    child: Text(
+                                      _uploadError!,
+                                      style: TextStyle(color: Colors.white),
+                                      maxLines: 2,
+                                    ),
+                                  ),
+                                  IconButton(
+                                    icon: Icon(Icons.close, color: Colors.white),
+                                    onPressed: () => setState(() => _uploadError = null),
+                                    padding: EdgeInsets.zero,
+                                    iconSize: 20,
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        Positioned(
+                          left: left,
+                          top: top,
+                          width: width,
+                          height: height,
+                          child: GestureDetector(
+                            onTap: () {
+                              if (!_isCropping && !_isProcessingCrop && !_isProcessingTrim) {
+                                _togglePlayPause();
+                              }
+                            },
+                            onTapDown: (details) {
+                              if (_activeTool == EditorTool.crop && !_isProcessingCrop && !_isProcessingTrim) {
+                                final local = details.localPosition;
+                                if (_cropRect == null) {
+                                  setState(() {
+                                    _isCropping = true;
+                                    final defaultW = width * 0.7;
+                                    final defaultH = height * 0.7;
+                                    final leftPos = (local.dx - defaultW / 2).clamp(0.0, width - defaultW);
+                                    final topPos = (local.dy - defaultH / 2).clamp(0.0, height - defaultH);
+                                    _cropRect = Rect.fromLTWH(leftPos, topPos, defaultW, defaultH);
+                                  });
+                                }
+                              }
+                            },
+                            child: Stack(
+                              fit: StackFit.expand,
+                              children: [
+                                VideoPlayer(_controller),
+                                if (_showPlayButton && !_isCropping && !_isProcessingCrop && !_isProcessingTrim)
+                                  Container(
+                                    color: Colors.black.withOpacity(0.3),
+                                    child: Center(
+                                      child: Container(
+                                        width: 80,
+                                        height: 80,
+                                        decoration: BoxDecoration(
+                                          color: Colors.black.withOpacity(0.5),
+                                          shape: BoxShape.circle,
+                                        ),
+                                        child: Icon(
+                                          _isPlaying ? Icons.pause : Icons.play_arrow,
+                                          size: 40,
+                                          color: Colors.white.withOpacity(0.8),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                if (_cropRect != null && !_isProcessingCrop) ...[
+                                  CustomPaint(painter: _CropPainter(_cropRect!)),
+                                  _buildCropHandles(width, height),
+                                ],
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
+                    );
+                  },
+                ),
+              ),
+              ..._textOverlays.asMap().entries.map((entry) {
+                final i = entry.key;
+                final overlay = entry.value;
+                return Positioned(
+                  left: overlay.position.dx,
+                  top: overlay.position.dy,
+                  child: GestureDetector(
+                    onPanUpdate: (details) {
+                      final renderBox = _videoKey.currentContext?.findRenderObject() as RenderBox?;
+                      final newPos = Offset(
+                        overlay.position.dx + details.delta.dx,
+                        overlay.position.dy + details.delta.dy,
+                      );
+
+                      if (renderBox != null) {
+                        final size = renderBox.size;
+                        const removeThreshold = 30.0;
+                        if (newPos.dx < -removeThreshold || newPos.dx > size.width + removeThreshold || 
+                            newPos.dy < -removeThreshold || newPos.dy > size.height + removeThreshold) {
+                          setState(() => _textOverlays.removeAt(i));
+                          return;
+                        }
+                      }
+
+                      setState(() {
+                        _textOverlays[i] = TextOverlay(
+                          text: overlay.text,
+                          position: newPos,
+                          style: overlay.style,
+                        );
+                      });
+                    },
+                    child: Container(
+                      padding: EdgeInsets.all(8),
+                      color: Colors.black.withOpacity(0.3),
+                      child: Text(overlay.text, style: overlay.style),
+                    ),
+                  ),
+                );
+              }).toList(),
+              if (_selectedSound != null && !_isProcessingCrop && !_isProcessingTrim)
+                Positioned(
+                  top: 12,
+                  left: 12,
+                  child: Container(
+                    padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withOpacity(0.6),
+                      borderRadius: BorderRadius.circular(24),
+                      border: Border.all(color: Colors.white12),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.music_note, size: 16, color: Colors.white70),
+                        SizedBox(width: 8),
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              _selectedSound!['title'] ?? '',
+                              style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            Text(
+                              _selectedSound!['artist'] ?? '',
+                              style: TextStyle(color: Colors.white70, fontSize: 10),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ],
+                        ),
+                        SizedBox(width: 8),
+                        GestureDetector(
+                          onTap: () => setState(() => _selectedSound = null),
+                          child: Container(
+                            width: 22,
+                            height: 22,
+                            decoration: BoxDecoration(
+                              color: Colors.white12,
+                              shape: BoxShape.circle,
+                            ),
+                            child: Icon(Icons.close, size: 14, color: Colors.white),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              if (_showCroppedIndicator)
+                Positioned(
+                  top: _selectedSound != null ? 70 : 12,
+                  right: 12,
+                  child: Container(
+                    padding: EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withOpacity(0.6),
+                      borderRadius: BorderRadius.circular(24),
+                      border: Border.all(color: Colors.white12),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.crop, size: 16, color: Colors.white70),
+                        SizedBox(width: 8),
+                        Text('Cropped', style: TextStyle(color: Colors.white, fontSize: 12)),
+                      ],
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        )
+      : Center(child: CircularProgressIndicator());
+}
+
+
+  List<Widget> _buildAppBarActions() {
+    if (_isUploading) {
+      return [_buildUploadingIndicator()];
+    } else if (_isCropping) {
+      return [
+        TextButton(
+          onPressed: _resetCrop,
+          child: Text('Cancel', style: TextStyle(color: Colors.white)),
+        ),
+        TextButton(
+          onPressed: _handleCrop,
+          child: Text('Apply', style: TextStyle(color: Colors.white)),
+        ),
+      ];
+    } else if (_isTrimming) {
+      return [
+        TextButton(
+          onPressed: _resetTrim,
+          child: Text('Cancel', style: TextStyle(color: Colors.white)),
+        ),
+        TextButton(
+          onPressed: _handleTrim,
+          child: Text('Apply', style: TextStyle(color: Colors.white)),
+        ),
+      ];
+    } else if (!_isProcessingCrop && !_isProcessingTrim) {
+      return [_buildPostButton()];
+    }
+    return [];
+  }
+
+    void _handleTrimTool() {
+    setState(() {
+      if (_activeTool == EditorTool.trim) {
+        _isTrimming = false;
+        _activeTool = EditorTool.none;
+      } else {
+        _activeTool = EditorTool.trim;
+        _isTrimming = true;
+        _isCropping = false;
+        if (_trimData != null) {
+          _controller.seekTo(Duration(milliseconds: _trimData!.startValueMs));
+        }
+      }
+    });
+  }
+
+  void _handleSoundTool() async {
+    final result = await showModalBottomSheet<Map<String, String>>(
+      context: context,
+      builder: (bCtx) => SVSoundSelectionComponent(),
+    );
+    if (result != null) {
+      setState(() {
+        _selectedSound = result;
+        _activeTool = EditorTool.none;
+        _isTrimming = false;
+        _isCropping = false;
+      });
+    }
   }
 
   Widget _buildToolButton(IconData icon, String label, EditorTool tool, {VoidCallback? onTap}) {
@@ -1246,4 +1680,5 @@ class _SVVideoEditorScreenState extends State<SVVideoEditorScreen> {
       ],
     );
   }
+  
 }

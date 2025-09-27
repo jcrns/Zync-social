@@ -78,21 +78,21 @@ class _SVForumScreenState extends State<SVForumScreen> {
     }
   }
 
-  // Future<bool> _testVideoUrl(String url) async {
-  //   try {
-  //     final response = await http.head(Uri.parse(url));
-  //     if (response.statusCode == 200) {
-  //       print('Video URL is accessible: $url');
-  //       return true;
-  //     } else {
-  //       print('Video URL returned status: ${response.statusCode}');
-  //       return false;
-  //     }
-  //   } catch (e) {
-  //     print('Video URL test failed: $e');
-  //     return false;
-  //   }
-  // }
+  Future<bool> _testVideoUrl(String url) async {
+    try {
+      final response = await http.head(Uri.parse(url));
+      if (response.statusCode == 200) {
+        print('Video URL is accessible: $url');
+        return true;
+      } else {
+        print('Video URL returned status: ${response.statusCode}');
+        return false;
+      }
+    } catch (e) {
+      print('Video URL test failed: $e');
+      return false;
+    }
+  }
 
   Future<String?> _getAuthToken() async {
     final prefs = await SharedPreferences.getInstance();

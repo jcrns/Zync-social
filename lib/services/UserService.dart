@@ -26,7 +26,7 @@ class UserService {
 
     // Add video file
     request.files.add(await http.MultipartFile.fromPath(
-      'video',
+      'video_file',
       videoFile.path,
       filename: 'edited_video_${DateTime.now().millisecondsSinceEpoch}.mp4',
     ));
