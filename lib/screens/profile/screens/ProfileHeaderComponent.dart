@@ -1,7 +1,6 @@
 // In SVProfileHeaderComponent.dart
 import 'package:flutter/material.dart';
 import 'package:nb_utils/nb_utils.dart';
-import 'package:bbdsocial/utils/SVCommon.dart';
 import 'package:bbdsocial/utils/SVConstants.dart';
 
 class SVProfileHeaderComponent extends StatelessWidget {

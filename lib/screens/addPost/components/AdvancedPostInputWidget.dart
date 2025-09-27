@@ -1,4 +1,6 @@
 // lib/screens/home/components/SVAdvancedPostInputWidget.dart
+// ignore_for_file: unused_field
+
 import 'package:bbdsocial/utils/SVCommon.dart';
 import 'package:flutter/material.dart';
 import 'package:nb_utils/nb_utils.dart';

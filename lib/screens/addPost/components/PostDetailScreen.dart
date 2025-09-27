@@ -5,9 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:nb_utils/nb_utils.dart';
 import 'package:http/http.dart' as http;
 import 'package:cached_network_image/cached_network_image.dart';
-import 'package:bbdsocial/utils/SVCommon.dart';
 import 'package:bbdsocial/utils/SVConstants.dart';
-import 'package:bbdsocial/utils/SVColors.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:web_socket_channel/io.dart';
 

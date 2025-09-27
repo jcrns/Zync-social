@@ -1,5 +1,4 @@
 // In your VideoModel.dart file, add this to the VideoPost class
-import 'CommentModel.dart'; // Add this import
 
 class VideoPost {
   final int id;

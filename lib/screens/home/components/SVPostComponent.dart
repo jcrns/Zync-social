@@ -1,7 +1,6 @@
 import 'dart:convert';
 import 'package:bbdsocial/screens/addPost/components/SVPostOptionsComponent.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:nb_utils/nb_utils.dart';
 import 'package:http/http.dart' as http;
 import 'package:cached_network_image/cached_network_image.dart';
@@ -22,7 +21,6 @@ class _SVSocialFragmentState extends State<SVSocialFragment> {
   static const String apiUrl = '$url/api/social-posts/';
   static const String likeUrl = '$url/like/';
   final TextEditingController _postController = TextEditingController();
-  final FlutterSecureStorage _secureStorage = const FlutterSecureStorage();
   
   String get bearerToken => 'Bearer $token';
   bool _isLoading = false;

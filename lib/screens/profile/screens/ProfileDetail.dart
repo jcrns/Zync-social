@@ -1,7 +1,6 @@
 // lib/screens/profile/screens/ProfileDetail.dart
 import 'package:flutter/material.dart';
 import 'package:nb_utils/nb_utils.dart';
-import 'package:bbdsocial/main.dart';
 import 'package:bbdsocial/utils/SVCommon.dart';
 import 'package:bbdsocial/utils/SVConstants.dart';
 import 'package:bbdsocial/utils/SVColors.dart';

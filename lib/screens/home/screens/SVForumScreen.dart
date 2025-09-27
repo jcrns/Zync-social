@@ -5,7 +5,6 @@ import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:nb_utils/nb_utils.dart';
 import 'package:bbdsocial/utils/SVColors.dart';
 import 'package:bbdsocial/models/VideoModel.dart';
@@ -79,21 +78,21 @@ class _SVForumScreenState extends State<SVForumScreen> {
     }
   }
 
-  Future<bool> _testVideoUrl(String url) async {
-    try {
-      final response = await http.head(Uri.parse(url));
-      if (response.statusCode == 200) {
-        print('Video URL is accessible: $url');
-        return true;
-      } else {
-        print('Video URL returned status: ${response.statusCode}');
-        return false;
-      }
-    } catch (e) {
-      print('Video URL test failed: $e');
-      return false;
-    }
-  }
+  // Future<bool> _testVideoUrl(String url) async {
+  //   try {
+  //     final response = await http.head(Uri.parse(url));
+  //     if (response.statusCode == 200) {
+  //       print('Video URL is accessible: $url');
+  //       return true;
+  //     } else {
+  //       print('Video URL returned status: ${response.statusCode}');
+  //       return false;
+  //     }
+  //   } catch (e) {
+  //     print('Video URL test failed: $e');
+  //     return false;
+  //   }
+  // }
 
   Future<String?> _getAuthToken() async {
     final prefs = await SharedPreferences.getInstance();
@@ -527,8 +526,13 @@ class _VideoPostItemState extends State<VideoPostItem> {
 
   void _connectToVideoWebSocket() async {
 
+    print('Connecting to WebSocket for video ${widget.video.id}');
+
+
     try {
       final token = await _getAuthToken();
+    print("auth token: ${token}");
+
       final tokenParam = token != null ? '?token=$token' : '';
       final wsUrl = Uri.parse('ws://10.0.0.158:8000/ws/video/${widget.video.id}/$tokenParam');
       

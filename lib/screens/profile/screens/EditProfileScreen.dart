@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:nb_utils/nb_utils.dart';
 import 'package:bbdsocial/services/UserService.dart';
 import 'package:bbdsocial/utils/SVColors.dart';
-import 'package:bbdsocial/utils/SVCommon.dart';
 
 class SVEditProfileScreen extends StatefulWidget {
   final Map<String, dynamic>? profileData;

@@ -4,8 +4,6 @@ import 'package:flutter/material.dart';
 import 'package:nb_utils/nb_utils.dart';
 import 'package:bbdsocial/utils/SVColors.dart';
 import 'package:bbdsocial/utils/SVConstants.dart';
-import 'package:http/http.dart' as http;
-import 'dart:convert';
 
 class SVPostInputWidget extends StatefulWidget {
   final String? replyingToUsername;
